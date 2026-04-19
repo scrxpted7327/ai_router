@@ -742,9 +742,9 @@ function connectTerminal() {
     term.writeln("\r\n[WebSocket error - check browser console]\r\n");
   });
 
-  // Bind input handler (always rebind to capture new socket)
+  // Bind input handler with local echo (always rebind to capture new socket)
   term.onData((data) => {
-    console.log("[Terminal] onData received:", JSON.stringify(data), "length:", data.length);
+    console.log("[Terminal] onData received:", JSON.stringify(data), "length:", data.length, "charCode:", data.charCodeAt(0));
     const current = state.terminal.socket;
     if (!current) {
       console.log("[Terminal] No socket available");
@@ -754,11 +754,32 @@ function connectTerminal() {
       console.log("[Terminal] Socket not open, state:", current.readyState);
       return;
     }
+
+    // Local echo for printable characters
+    const code = data.charCodeAt(0);
+    if (code === 13) {
+      // Enter key - echo newline and send
+      term.write("\r\n");
+    } else if (code === 127 || code === 8) {
+      // Backspace/Delete - move cursor back, erase character
+      term.write("\b \b");
+    } else if (code >= 32 && code < 127) {
+      // Printable character - echo it
+      term.write(data);
+    } else if (code === 3) {
+      // Ctrl+C
+      term.write("^C\r\n");
+    } else if (code === 4) {
+      // Ctrl+D
+      term.write("^D\r\n");
+    }
+    // Arrow keys and other escape sequences pass through without echo
+
     const message = JSON.stringify({ type: "input", data });
     console.log("[Terminal] Sending input:", message);
     current.send(message);
   });
-  console.log("[Terminal] onData handler bound to new socket");
+  console.log("[Terminal] onData handler bound with local echo");
 }
 
 async function setTab(name) {
