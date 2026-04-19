@@ -367,6 +367,30 @@ def _opencode_zen_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] 
     return provider, models
 
 
+def _anthropic_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    if not _env("ANTHROPIC_API_KEY"):
+        return None
+    provider = ProviderConfig("anthropic", "anthropic", "anthropic", ("ANTHROPIC_API_KEY",))
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7", "Claude Opus 4.7", ("claude-opus-4-7-direct",), True, True, 200_000, 32_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4-6", "Claude Sonnet 4.6", ("claude-sonnet-4-6-direct", "claude-direct"), False, True, 200_000, 16_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-haiku-4-5-20251001", "Claude Haiku 4.5 (Direct)", ("claude-haiku-direct",), False, True, 200_000, 8_192),
+    )
+    return provider, models
+
+
+def _gemini_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    if not _env("GEMINI_API_KEY"):
+        return None
+    provider = ProviderConfig("gemini", "gemini", "gemini", ("GEMINI_API_KEY",))
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-pro", "Gemini 2.5 Pro", ("gemini-pro", "gemini"), True, True, 1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.0-flash", "Gemini 2.0 Flash", ("gemini-flash",), False, True, 1_048_576, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite", ("gemini-flash-lite",), False, True, 1_048_576, 8_192),
+    )
+    return provider, models
+
+
 def _bedrock_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
     region = _env("AWS_REGION") or _env("AWS_DEFAULT_REGION") or _env("BEDROCK_REGION")
     has_auth = any(
@@ -433,6 +457,8 @@ def _bedrock_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | Non
 def _provider_specs() -> list[tuple[ProviderConfig, tuple[CatalogModel, ...]]]:
     providers = []
     for builder in (
+        _anthropic_provider,
+        _gemini_provider,
         _copilot_provider,
         _groq_provider,
         _cerebras_provider,

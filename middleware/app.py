@@ -41,6 +41,7 @@ from .compactor import compact, needs_compaction
 from .db import ModelControl, Session, SessionLocal, User, init_db
 from .format_adapter import normalise_request, stream_as_responses_api
 from .router import route
+from .providers import anthropic as anthropic_provider
 from .providers import bedrock as bedrock_provider
 from .providers import gemini as gemini_provider
 from .providers import openai_compat
@@ -545,6 +546,8 @@ async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
 
 
 async def _complete(entry: reg.ModelEntry, body: dict) -> dict:
+    if entry.provider == "anthropic":
+        return await anthropic_provider.chat(entry.model_id, body, entry.api_key)
     if entry.provider == "gemini":
         return await gemini_provider.chat(entry.model_id, body, entry.api_key)
     if entry.provider == "bedrock":
@@ -555,7 +558,10 @@ async def _complete(entry: reg.ModelEntry, body: dict) -> dict:
 
 
 async def _stream(entry: reg.ModelEntry, body: dict) -> AsyncIterator[str]:
-    if entry.provider == "gemini":
+    if entry.provider == "anthropic":
+        async for chunk in anthropic_provider.stream(entry.model_id, body, entry.api_key):
+            yield chunk
+    elif entry.provider == "gemini":
         async for chunk in gemini_provider.stream(entry.model_id, body, entry.api_key):
             yield chunk
     elif entry.provider == "bedrock":
