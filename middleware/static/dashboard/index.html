@@ -99,6 +99,12 @@
           <button type="button" data-tab="connect">
             <span class="nav-ico">⎘</span> Connect
           </button>
+          <button type="button" data-tab="tokens">
+            <span class="nav-ico">⚿</span> API Keys
+          </button>
+          <button type="button" data-tab="users" class="admin-only hidden">
+            <span class="nav-ico">⛁</span> Users
+          </button>
           <button type="button" data-tab="auth" class="admin-only hidden">
             <span class="nav-ico">⛁</span> Auth
           </button>
@@ -243,6 +249,35 @@
               </p>
               <div id="anthropic-connect" class="help-pre"></div>
             </div>
+          </div>
+        </section>
+
+        <section data-panel="tokens" class="hidden">
+          <div class="panel">
+            <div class="panel-top">
+              <h2>Your API keys</h2>
+              <div id="tokens-msg" class="msg hidden"></div>
+            </div>
+            <p class="panel-note">
+              Keys you add here are encrypted and used instead of the server's
+              shared keys. They stay per-account and are never shown after saving.
+            </p>
+            <div id="provider-tokens-grid" class="provider-tokens-grid"></div>
+          </div>
+        </section>
+
+        <section data-panel="users" class="hidden">
+          <div class="panel">
+            <h2>User management</h2>
+            <p class="panel-note">Click a user to manage their provider keys.</p>
+            <div id="admin-users-list"></div>
+          </div>
+          <div class="panel" id="admin-user-detail" style="margin-top:1rem;display:none">
+            <div class="panel-top">
+              <h2 id="admin-user-detail-title">User tokens</h2>
+              <button type="button" class="btn" id="btn-admin-user-back">← Back</button>
+            </div>
+            <div id="admin-user-tokens-grid" class="provider-tokens-grid"></div>
           </div>
         </section>
 

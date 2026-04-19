@@ -9,6 +9,7 @@ aiosqlite>=0.20.0
 
 # Auth
 bcrypt>=4.0.0
+cryptography>=42.0.0
 
 # Providers
 openai>=1.40.0

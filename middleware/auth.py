@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import Conversation, GatewayApiToken, Session, SessionLocal, User
+from .tokens import delete_user_token, get_user_token, list_user_tokens, set_user_token
 
 # ── Login rate limiting (in-memory, per IP) ───────────────────────────────────
 # Allows 10 attempts per 60s window. After 10 cumulative failures the IP must
@@ -276,6 +277,46 @@ async def regenerate_token(user: User = Depends(resolve_session), db: AsyncSessi
     db.add(GatewayApiToken(user_id=user.id, label="dashboard", token_digest=digest))
     await db.commit()
     return TokenOut(token=raw_token)
+
+
+# ── Per-user provider token routes ───────────────────────────────────────────
+
+_VALID_PROVIDERS = {
+    "anthropic", "openai", "gemini", "mistral", "deepseek", "xai",
+    "groq", "cerebras", "openrouter", "together", "perplexity",
+    "fireworks", "cohere", "zai", "kilo", "opencode", "opencode-zen",
+}
+
+
+@router.get("/provider-tokens")
+async def list_provider_tokens(user: User = Depends(resolve_session)):
+    return await list_user_tokens(user.id)
+
+
+@router.put("/provider-tokens/{provider_id}")
+async def upsert_provider_token(
+    provider_id: str,
+    payload: dict,
+    user: User = Depends(resolve_session),
+):
+    if provider_id not in _VALID_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_id}")
+    token = str(payload.get("token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="token must not be empty")
+    await set_user_token(user.id, provider_id, token)
+    return {"ok": True, "provider_id": provider_id}
+
+
+@router.delete("/provider-tokens/{provider_id}")
+async def delete_provider_token(
+    provider_id: str,
+    user: User = Depends(resolve_session),
+):
+    deleted = await delete_user_token(user.id, provider_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Token not found")
+    return {"ok": True, "provider_id": provider_id}
 
 
 # ── Conversation history routes ───────────────────────────────────────────────

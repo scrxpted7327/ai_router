@@ -45,6 +45,7 @@ from .providers import anthropic as anthropic_provider
 from .providers import bedrock as bedrock_provider
 from .providers import gemini as gemini_provider
 from .providers import openai_compat
+from .tokens import delete_user_token, get_user_token, list_user_tokens, set_user_token
 
 ENV_PATH = Path(__file__).parent.parent / ".env"
 STATIC_DASHBOARD = Path(__file__).parent / "static" / "dashboard"
@@ -375,6 +376,66 @@ async def set_model_controls(payload: dict, _admin=Depends(require_admin)) -> di
     return {"ok": True}
 
 
+# ── Admin: user + provider-token management ───────────────────────────────────
+
+@app.get("/dashboard/users")
+async def admin_list_users(_admin=Depends(require_admin)) -> dict:
+    async with SessionLocal() as db:
+        from sqlalchemy import func as sqfunc
+        from .db import UserProviderToken as UPT
+        users = (await db.execute(select(User).order_by(User.created_at))).scalars().all()
+        token_counts: dict[str, int] = {}
+        for u in users:
+            cnt = (await db.execute(
+                select(sqfunc.count()).select_from(UPT).where(UPT.user_id == u.id)
+            )).scalar() or 0
+            token_counts[u.id] = cnt
+    return {
+        "users": [
+            {
+                "id": u.id,
+                "email": u.email,
+                "is_whitelisted": u.is_whitelisted,
+                "is_admin": u.is_admin,
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+                "provider_token_count": token_counts.get(u.id, 0),
+            }
+            for u in users
+        ]
+    }
+
+
+@app.get("/dashboard/users/{user_id}/provider-tokens")
+async def admin_get_user_tokens(user_id: str, _admin=Depends(require_admin)) -> dict:
+    return {"tokens": await list_user_tokens(user_id)}
+
+
+@app.put("/dashboard/users/{user_id}/provider-tokens/{provider_id}")
+async def admin_set_user_token(
+    user_id: str,
+    provider_id: str,
+    payload: dict,
+    _admin=Depends(require_admin),
+) -> dict:
+    token = str(payload.get("token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="token must not be empty")
+    await set_user_token(user_id, provider_id, token)
+    return {"ok": True}
+
+
+@app.delete("/dashboard/users/{user_id}/provider-tokens/{provider_id}")
+async def admin_delete_user_token(
+    user_id: str,
+    provider_id: str,
+    _admin=Depends(require_admin),
+) -> dict:
+    deleted = await delete_user_token(user_id, provider_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Token not found")
+    return {"ok": True}
+
+
 @app.websocket("/terminal")
 async def terminal(websocket: WebSocket) -> None:
     if not await _ws_is_admin(websocket):
@@ -528,11 +589,19 @@ async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
     else:
         log.info("Model '%s' → %s (%s)", requested, entry.model_id, entry.provider)
 
+    # 3. Apply user's personal API key if one is stored
+    if user and entry.provider_id:
+        user_key = await get_user_token(user.id, entry.provider_id)
+        if user_key:
+            from dataclasses import replace as dc_replace
+            entry = dc_replace(entry, api_key=user_key)
+            log.info("Using personal token for provider '%s'", entry.provider_id)
+
     if entry.provider != "bedrock" and (not entry.api_key or "REPLACE_ME" in entry.api_key):
         raise HTTPException(status_code=401,
                             detail=f"No API key for '{entry.provider}'. Run `python pi_auth.py`.")
 
-    # 3. Dispatch to provider
+    # 4. Dispatch to provider
     if do_stream:
         raw_stream = _stream(entry, body)
         if is_responses_api:

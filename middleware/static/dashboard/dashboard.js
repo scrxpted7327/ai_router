@@ -3,6 +3,22 @@
  */
 const $ = (sel, root = document) => root.querySelector(sel);
 
+const PROVIDER_CATALOG = [
+  { id: "anthropic",    name: "Anthropic",     hint: "sk-ant-…",     url: "https://console.anthropic.com/settings/keys" },
+  { id: "openai",       name: "OpenAI",        hint: "sk-…",         url: "https://platform.openai.com/api-keys" },
+  { id: "gemini",       name: "Google Gemini", hint: "AIza…",        url: "https://aistudio.google.com/apikey" },
+  { id: "mistral",      name: "Mistral",       hint: "…",            url: "https://console.mistral.ai/api-keys" },
+  { id: "deepseek",     name: "DeepSeek",      hint: "sk-…",         url: "https://platform.deepseek.com/api_keys" },
+  { id: "xai",          name: "xAI (Grok)",    hint: "xai-…",        url: "https://console.x.ai" },
+  { id: "groq",         name: "Groq",          hint: "gsk_…",        url: "https://console.groq.com/keys" },
+  { id: "cerebras",     name: "Cerebras",      hint: "csk-…",        url: "https://cloud.cerebras.ai/platform" },
+  { id: "openrouter",   name: "OpenRouter",    hint: "sk-or-…",      url: "https://openrouter.ai/settings/keys" },
+  { id: "together",     name: "Together AI",   hint: "…",            url: "https://api.together.xyz/settings/api-keys" },
+  { id: "perplexity",   name: "Perplexity",    hint: "pplx-…",       url: "https://www.perplexity.ai/settings/api" },
+  { id: "fireworks",    name: "Fireworks",     hint: "fw-…",         url: "https://fireworks.ai/account/api-keys" },
+  { id: "cohere",       name: "Cohere",        hint: "…",            url: "https://dashboard.cohere.com/api-keys" },
+];
+
 const state = {
   user: null,
   tab: "overview",
@@ -14,6 +30,10 @@ const state = {
   tokenMeta: null,
   lastToken: "",
   modelControls: null,
+  providerTokens: [],       // [{provider_id, token_prefix, updated_at}]
+  adminUsers: null,
+  adminSelectedUser: null,
+  adminUserTokens: [],
   terminal: {
     term: null,
     socket: null,
@@ -134,6 +154,131 @@ async function copyLastToken() {
     throw new Error("No token available yet. Click Regenerate first.");
   }
   await navigator.clipboard.writeText(state.lastToken);
+}
+
+// ── Provider token helpers ────────────────────────────────────────────────────
+
+async function fetchProviderTokens() {
+  if (!state.user) { state.providerTokens = []; return; }
+  const r = await api("/auth/provider-tokens");
+  state.providerTokens = r.ok ? await r.json() : [];
+}
+
+async function upsertProviderToken(providerId, token) {
+  const r = await api(`/auth/provider-tokens/${encodeURIComponent(providerId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ token }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || "Failed to save token");
+  await fetchProviderTokens();
+}
+
+async function deleteProviderToken(providerId) {
+  const r = await api(`/auth/provider-tokens/${encodeURIComponent(providerId)}`, {
+    method: "DELETE",
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || "Failed to delete token");
+  await fetchProviderTokens();
+}
+
+function renderProviderTokens(gridId, tokens, forUserId) {
+  const grid = document.getElementById(gridId);
+  if (!grid) return;
+
+  const byProvider = Object.fromEntries(tokens.map((t) => [t.provider_id, t]));
+
+  grid.innerHTML = PROVIDER_CATALOG.map((p) => {
+    const existing = byProvider[p.id];
+    const isSet = !!existing;
+    return `<div class="provider-card ${isSet ? "provider-card--set" : ""}" data-provider-card="${p.id}" data-for-user="${forUserId || ""}">
+      <div class="provider-card-head">
+        <span class="provider-card-name">${escapeHtml(p.name)}</span>
+        ${isSet ? `<span class="pill ok" style="font-size:0.68rem">set</span>` : `<span class="pill" style="font-size:0.68rem">not set</span>`}
+      </div>
+      ${isSet ? `<div class="provider-card-prefix mono">${escapeHtml(existing.token_prefix || "")}</div>` : ""}
+      <div class="provider-card-form">
+        <input
+          type="password"
+          class="provider-token-input"
+          placeholder="${escapeHtml(p.hint)}"
+          autocomplete="off"
+          data-provider="${p.id}"
+        />
+        <div class="provider-card-actions">
+          <button type="button" class="btn btn-primary btn-xs" data-action="save" data-provider="${p.id}">
+            ${isSet ? "Update" : "Save"}
+          </button>
+          ${isSet ? `<button type="button" class="btn btn-danger btn-xs" data-action="delete" data-provider="${p.id}">Remove</button>` : ""}
+          <a href="${p.url}" target="_blank" rel="noopener" class="btn btn-xs">Get key ↗</a>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function fetchAdminUsers() {
+  if (!state.user?.is_admin) { state.adminUsers = null; return; }
+  const r = await api("/dashboard/users");
+  state.adminUsers = r.ok ? (await r.json()).users : null;
+}
+
+async function fetchAdminUserTokens(userId) {
+  const r = await api(`/dashboard/users/${encodeURIComponent(userId)}/provider-tokens`);
+  state.adminUserTokens = r.ok ? (await r.json()).tokens : [];
+}
+
+async function adminUpsertToken(userId, providerId, token) {
+  const r = await api(`/dashboard/users/${encodeURIComponent(userId)}/provider-tokens/${encodeURIComponent(providerId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ token }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || "Failed to save token");
+  await fetchAdminUserTokens(userId);
+}
+
+async function adminDeleteToken(userId, providerId) {
+  const r = await api(`/dashboard/users/${encodeURIComponent(userId)}/provider-tokens/${encodeURIComponent(providerId)}`, {
+    method: "DELETE",
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || "Failed to delete token");
+  await fetchAdminUserTokens(userId);
+}
+
+function renderAdminUsers() {
+  const list = document.getElementById("admin-users-list");
+  const detail = document.getElementById("admin-user-detail");
+  if (!list) return;
+
+  if (!state.adminUsers?.length) {
+    list.innerHTML = '<div class="empty">No users found.</div>';
+    return;
+  }
+
+  list.innerHTML = `<div class="table-wrap"><table>
+    <thead><tr><th>Email</th><th>Status</th><th>Keys</th><th></th></tr></thead>
+    <tbody>
+      ${state.adminUsers.map((u) => `
+        <tr>
+          <td>${escapeHtml(u.email)}</td>
+          <td>${u.is_admin ? '<span class="pill ok">admin</span>' : u.is_whitelisted ? '<span class="pill ok">whitelisted</span>' : '<span class="pill warn">pending</span>'}</td>
+          <td class="mono">${u.provider_token_count}</td>
+          <td><button class="btn btn-xs" data-action="manage-user" data-user-id="${escapeHtml(u.id)}" data-user-email="${escapeHtml(u.email)}">Manage keys</button></td>
+        </tr>`).join("")}
+    </tbody>
+  </table></div>`;
+
+  if (state.adminSelectedUser) {
+    detail.style.display = "";
+    document.getElementById("admin-user-detail-title").textContent =
+      `Keys for ${state.adminSelectedUser.email}`;
+    renderProviderTokens("admin-user-tokens-grid", state.adminUserTokens, state.adminSelectedUser.id);
+  } else {
+    detail.style.display = "none";
+  }
 }
 
 async function fetchModelControls() {
@@ -622,6 +767,8 @@ async function setTab(name) {
       models: "Models",
       memory: "Memory",
       connect: "Connect",
+      tokens: "API Keys",
+      users: "Users",
       auth: "Auth",
       terminal: "Terminal",
       "model-policy": "Model Policy",
@@ -633,6 +780,14 @@ async function setTab(name) {
     renderConversations();
   }
   if (name === "connect") renderConnect();
+  if (name === "tokens") {
+    await fetchProviderTokens();
+    renderProviderTokens("provider-tokens-grid", state.providerTokens, null);
+  }
+  if (name === "users") {
+    await fetchAdminUsers();
+    renderAdminUsers();
+  }
   if (name === "auth") {
     await fetchPiStatus();
     renderPiStatus();
@@ -758,6 +913,14 @@ async function refreshAll() {
   renderPiStatus();
   renderModelPolicy();
   updateAdminNav();
+  if (state.tab === "tokens") {
+    await fetchProviderTokens();
+    renderProviderTokens("provider-tokens-grid", state.providerTokens, null);
+  }
+  if (state.tab === "users" && state.user?.is_admin) {
+    await fetchAdminUsers();
+    renderAdminUsers();
+  }
 }
 
 function wire() {
@@ -860,6 +1023,75 @@ function wire() {
 
   document.querySelectorAll(".nav button[data-tab]").forEach((btn) => {
     btn.addEventListener("click", () => void setTab(btn.dataset.tab));
+  });
+
+  // ── Provider token cards (own tokens) ──────────────────────────────────────
+  function tokenMsg(text, kind) {
+    const el = document.getElementById("tokens-msg");
+    if (!el) return;
+    el.textContent = text;
+    el.className = `msg ${kind}`;
+    el.classList.remove("hidden");
+    setTimeout(() => el.classList.add("hidden"), 4000);
+  }
+
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-action]");
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const providerId = btn.dataset.provider;
+    const forUser = btn.dataset.forUser || btn.closest("[data-provider-card]")?.dataset.forUser || "";
+
+    if (action === "save") {
+      const card = btn.closest("[data-provider-card]");
+      const input = card?.querySelector(".provider-token-input");
+      const val = input?.value.trim();
+      if (!val) { tokenMsg("Enter a key first", "error"); return; }
+      try {
+        if (forUser) {
+          await adminUpsertToken(forUser, providerId, val);
+          if (state.adminSelectedUser?.id === forUser) {
+            renderProviderTokens("admin-user-tokens-grid", state.adminUserTokens, forUser);
+          }
+        } else {
+          await upsertProviderToken(providerId, val);
+          renderProviderTokens("provider-tokens-grid", state.providerTokens, null);
+          tokenMsg(`${providerId} key saved`, "ok");
+        }
+        if (input) input.value = "";
+      } catch (err) { tokenMsg(String(err.message || err), "error"); }
+      return;
+    }
+
+    if (action === "delete") {
+      if (!confirm(`Remove ${providerId} key?`)) return;
+      try {
+        if (forUser) {
+          await adminDeleteToken(forUser, providerId);
+          if (state.adminSelectedUser?.id === forUser) {
+            renderProviderTokens("admin-user-tokens-grid", state.adminUserTokens, forUser);
+          }
+        } else {
+          await deleteProviderToken(providerId);
+          renderProviderTokens("provider-tokens-grid", state.providerTokens, null);
+          tokenMsg(`${providerId} key removed`, "ok");
+        }
+      } catch (err) { tokenMsg(String(err.message || err), "error"); }
+      return;
+    }
+
+    if (action === "manage-user") {
+      state.adminSelectedUser = { id: btn.dataset.userId, email: btn.dataset.userEmail };
+      await fetchAdminUserTokens(btn.dataset.userId);
+      renderAdminUsers();
+      return;
+    }
+  });
+
+  document.getElementById("btn-admin-user-back")?.addEventListener("click", () => {
+    state.adminSelectedUser = null;
+    state.adminUserTokens = [];
+    renderAdminUsers();
   });
 }
 

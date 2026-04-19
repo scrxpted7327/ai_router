@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text, func, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text, UniqueConstraint, func, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -33,9 +33,27 @@ class User(Base):
     is_admin = Column(Boolean, default=False, nullable=False)
     created_at   = Column(DateTime(timezone=True), server_default=func.now())
 
-    sessions      = relationship("Session", back_populates="user", cascade="all, delete-orphan")
-    conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
-    gateway_tokens = relationship("GatewayApiToken", back_populates="user", cascade="all, delete-orphan")
+    sessions        = relationship("Session", back_populates="user", cascade="all, delete-orphan")
+    conversations   = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
+    gateway_tokens  = relationship("GatewayApiToken", back_populates="user", cascade="all, delete-orphan")
+    provider_tokens = relationship("UserProviderToken", back_populates="user", cascade="all, delete-orphan")
+
+
+class UserProviderToken(Base):
+    """Per-user API keys for upstream AI providers, stored Fernet-encrypted."""
+
+    __tablename__ = "user_provider_tokens"
+    __table_args__ = (UniqueConstraint("user_id", "provider_id"),)
+
+    id           = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id      = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    provider_id  = Column(String, nullable=False)        # e.g. "anthropic", "openai"
+    encrypted_token = Column(Text, nullable=False)
+    token_prefix = Column(String, default="")            # first 8 chars for display
+    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at   = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User", back_populates="provider_tokens")
 
 
 class GatewayApiToken(Base):

@@ -29,6 +29,7 @@ from .providers import anthropic as anthropic_provider
 from .providers import bedrock as bedrock_provider
 from .providers import gemini as gemini_provider
 from .providers import openai_compat
+from .tokens import get_user_token
 
 log = logging.getLogger("ai_router")
 
@@ -209,7 +210,7 @@ def _stream(entry: reg.ModelEntry, body: dict) -> AsyncIterator[str]:
 
 @router.post("/v1/messages")
 async def messages(request: Request):
-    await _auth(request)
+    user = await _auth(request)
 
     body = await request.json()
     requested_model = body.get("model", "")
@@ -223,6 +224,13 @@ async def messages(request: Request):
     entry = reg.get(requested_model)
     if not entry:
         raise HTTPException(status_code=404, detail=f"Model '{requested_model}' not found in gateway registry")
+
+    # Apply user's personal provider key if stored
+    if entry.provider_id:
+        user_key = await get_user_token(user.id, entry.provider_id)
+        if user_key:
+            from dataclasses import replace as dc_replace
+            entry = dc_replace(entry, api_key=user_key)
 
     if entry.provider != "bedrock" and (not entry.api_key or "REPLACE_ME" in entry.api_key):
         raise HTTPException(status_code=503, detail=f"No API key configured for '{requested_model}'")
