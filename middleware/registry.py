@@ -406,8 +406,10 @@ def _groq_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
         CatalogModel(provider.id, provider.api, provider.label, "llama3-70b-8192",                "Llama 3 70B (Groq)",            ("llama3-70b-groq",),               False, False,   8_192,  8_192),
         CatalogModel(provider.id, provider.api, provider.label, "deepseek-r1-distill-llama-70b",  "DeepSeek R1 Distill (Groq)",    ("deepseek-r1-groq",),              True,  False, 128_000, 16_384),
         CatalogModel(provider.id, provider.api, provider.label, "qwen-qwq-32b",                   "QwQ 32B (Groq)",                ("qwq-groq",),                      True,  False, 131_072,  8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "compound-beta",                  "Compound Beta (Groq)",          ("compound-groq",),                 False, True,  128_000,  8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "compound-beta-mini",             "Compound Beta Mini (Groq)",     ("compound-mini-groq",),            False, True,  128_000,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "qwen/qwen3-32b",                 "Qwen3 32B (Groq)",              ("qwen3-groq",),                    True,  False,  32_000, 16_000),
+        CatalogModel(provider.id, provider.api, provider.label, "moonshotai/kimi-k2-instruct-0905", "Kimi K2 Instruct (Groq)",    ("kimi-groq",),                     False, False, 131_072,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "openai/gpt-oss-120b",            "GPT-OSS 120B (Groq)",           ("gpt-oss-groq",),                  False, False, 131_072, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "groq/compound",                  "Compound (Groq)",               ("compound-groq",),                 False, True,  128_000,  8_192),
         CatalogModel(provider.id, provider.api, provider.label, "mistral-saba-24b",               "Mistral Saba 24B (Groq)",       ("mistral-saba-groq",),             False, False,  32_768,  4_096),
         CatalogModel(provider.id, provider.api, provider.label, "gemma2-9b-it",                   "Gemma 2 9B (Groq)",             ("gemma2-groq",),                   False, False,   8_192,  8_192),
     )
@@ -417,14 +419,17 @@ def _groq_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
 def _cerebras_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
     if not _env("CEREBRAS_API_KEY"):
         return None
-    provider = ProviderConfig("cerebras", "openai", "cerebras", ("CEREBRAS_API_KEY",), base_url="https://api.cerebras.ai/v1")
+    provider = ProviderConfig("cerebras", "openai", "cerebras", ("CEREBRAS_API_KEY",), base_url="https://api.cerebras.ai/v1", extra_headers={"X-Cerebras-3rd-Party-Integration": "ai-router"})
     models = (
         CatalogModel(provider.id, provider.api, provider.label, "llama-3.3-70b",       "Llama 3.3 70B (Cerebras)",        ("llama-3.3-70b-cerebras", "cerebras", "cerebras-fast"), False, False, 128_000, 8_192),
         CatalogModel(provider.id, provider.api, provider.label, "llama3.1-70b",        "Llama 3.1 70B (Cerebras)",        ("llama3.1-70b-cerebras",),                              False, False, 128_000, 8_192),
         CatalogModel(provider.id, provider.api, provider.label, "llama3.1-8b",         "Llama 3.1 8B (Cerebras)",         ("llama3.1-8b-cerebras",),                               False, False, 128_000, 8_192),
         CatalogModel(provider.id, provider.api, provider.label, "llama-4-scout-17b-16e-instruct", "Llama 4 Scout (Cerebras)", ("llama-4-scout-cerebras",),                         False, True,  131_072, 8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "qwen-3-32b",          "Qwen3 32B (Cerebras)",            ("qwen-3-32b-cerebras", "qwen-cerebras"),                True,  False,  32_000, 16_000),
+        CatalogModel(provider.id, provider.api, provider.label, "qwen/qwen3-32b",      "Qwen3 32B (Cerebras)",            ("qwen-3-32b-cerebras", "qwen-cerebras"),                True,  False,  32_000, 16_000),
+        CatalogModel(provider.id, provider.api, provider.label, "qwen/qwen3-235b-a22b-instruct-2507", "Qwen3 235B (Cerebras)", ("qwen-235b-cerebras",),                         True,  False, 131_072,  8_192),
         CatalogModel(provider.id, provider.api, provider.label, "deepseek-r1-distill-llama-70b", "DeepSeek R1 Distill (Cerebras)", ("deepseek-r1-cerebras",),                     True,  False, 128_000, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-oss-120b",        "GPT-OSS 120B (Cerebras)",         ("gpt-oss-cerebras",),                                   False, False, 131_072, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "zai-glm-4.7",         "GLM-4.7 (Cerebras)",              ("glm-cerebras",),                                       False, True,  128_000,  4_096),
     )
     return provider, models
 
@@ -507,9 +512,17 @@ def _zai_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
 def _kilo_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
     if not _env("KILO_API_KEY"):
         return None
-    provider = ProviderConfig("kilo", "openai", "kilo", ("KILO_API_KEY",), base_url="https://api.kilo.ai/v1")
+    provider = ProviderConfig("kilo", "openai", "kilo", ("KILO_API_KEY",), base_url="https://api.kilo.ai/api/gateway", extra_headers={"HTTP-Referer": "https://ai.scrxpted.cc/", "X-Title": "ai-router"})
     models = (
-        CatalogModel(provider.id, provider.api, provider.label, "kilo-default", "Kilo Default", ("kilo",), False, False, 200_000, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "openai/gpt-5.4", "GPT-5.4 (Kilo)", ("kilo-gpt5", "kilo"), True, True, 1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "openai/gpt-5.1", "GPT-5.1 (Kilo)", ("kilo-gpt5.1",), False, True, 1_047_576, 32_768),
+        CatalogModel(provider.id, provider.api, provider.label, "anthropic/claude-opus-4-7", "Claude Opus 4.7 (Kilo)", ("kilo-opus",), True, True, 200_000, 32_000),
+        CatalogModel(provider.id, provider.api, provider.label, "anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6 (Kilo)", ("kilo-sonnet",), False, True, 200_000, 16_000),
+        CatalogModel(provider.id, provider.api, provider.label, "xai/grok-3", "Grok 3 (Kilo)", ("kilo-grok",), True, False, 131_072, 131_072),
+        CatalogModel(provider.id, provider.api, provider.label, "google/gemini-2.5-pro", "Gemini 2.5 Pro (Kilo)", ("kilo-gemini",), True, True, 1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "deepseek/deepseek-r1", "DeepSeek R1 (Kilo)", ("kilo-r1",), True, False, 163_840, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "meta-llama/llama-4-maverick", "Llama 4 Maverick (Kilo)", ("kilo-llama4",), False, True, 524_288, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "free/giga-potato", "Giga Potato (free)", ("kilo-free",), False, False, 131_072, 8_192),
     )
     return provider, models
 
@@ -525,7 +538,14 @@ def _opencode_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | No
         base_url=_env("OPENCODE_BASE_URL") or "https://api.opencode.ai/v1",
     )
     models = (
-        CatalogModel(provider.id, provider.api, provider.label, "opencode-default", "OpenCode Default", ("opencode",), False, False, 200_000, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.4-codex", "GPT-5.4 Codex (OpenCode)", ("opencode", "opencode-codex"), True, True, 1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.3-codex", "GPT-5.3 Codex (OpenCode)", ("opencode-5.3",), True, True, 1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7", "Claude Opus 4.7 (OpenCode)", ("opencode-opus",), True, True, 200_000, 32_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4-6", "Claude Sonnet 4.6 (OpenCode)", ("opencode-sonnet",), False, True, 200_000, 16_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.1", "GPT-5.1 (OpenCode)", ("opencode-5.1",), False, True, 1_047_576, 32_768),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-pro", "Gemini 2.5 Pro (OpenCode)", ("opencode-gemini",), True, True, 1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "deepseek-r1", "DeepSeek R1 (OpenCode)", ("opencode-r1",), True, False, 163_840, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "o3", "o3 (OpenCode)", ("opencode-o3",), True, True, 200_000, 100_000),
     )
     return provider, models
 
@@ -538,10 +558,16 @@ def _opencode_zen_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] 
         "openai",
         "opencode zen",
         ("OPENCODE_ZEN_API_KEY",),
-        base_url=_env("OPENCODE_ZEN_BASE_URL") or "https://api.minimaxi.chat/v1",
+        base_url=_env("OPENCODE_ZEN_BASE_URL") or "https://opencode.ai/zen/v1",
     )
     models = (
-        CatalogModel(provider.id, provider.api, provider.label, "MiniMax-Text-01", "MiniMax Text-01 (OpenCode Zen)", ("opencode-zen", "minimax"), False, False, 1_000_000, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.3-codex", "GPT-5.3 Codex (Zen)", ("opencode-zen", "zen"), True, True, 1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.1", "GPT-5.1 (Zen)", ("zen-gpt5",), False, True, 1_047_576, 32_768),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7", "Claude Opus 4.7 (Zen)", ("zen-opus",), True, True, 200_000, 32_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-pro", "Gemini 2.5 Pro (Zen)", ("zen-gemini",), True, True, 1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "mimo-v2-omni-free", "Mimo v2 Omni (free)", ("zen-free", "mimo-free"), False, True, 131_072, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "qwen3.6-plus-free", "Qwen 3.6 Plus (free)", ("qwen-zen-free",), False, False, 131_072, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "MiniMax-Text-01", "MiniMax Text-01 (Zen)", ("minimax-zen",), False, False, 1_000_000, 8_192),
     )
     return provider, models
 
