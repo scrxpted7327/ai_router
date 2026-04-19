@@ -563,6 +563,7 @@ def _copilot_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | Non
 
     # Static fallback models with good aliases
     static_models = (
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.3-codex",           "GPT-5.3 Codex (Copilot)",     ("copilot-codex",),             True,  True,  1_000_000, 100_000),
         CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4-6",       "Claude Sonnet 4.6 (Copilot)", ("claude-sonnet", "claude", "sonnet"), False, True, 200_000, 16_000),
         CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7",         "Claude Opus 4.7 (Copilot)",   ("claude-opus", "opus"),        True,  True,  200_000, 32_000),
         CatalogModel(provider.id, provider.api, provider.label, "claude-haiku-4-5-20251001","Claude Haiku 4.5 (Copilot)", ("claude-haiku", "haiku"),      False, True,  200_000,  8_192),
