@@ -1,7 +1,11 @@
 #!/bin/bash
-# Run once as root on a fresh Ubuntu 24.04 LTS Droplet.
-# Usage: ssh root@<your-ip> 'bash -s' < deploy/setup_droplet.sh
+# Full bootstrap — paste into DigitalOcean startup script field.
+# After boot, only one step remains: scp your .env to /opt/ai-router/.env
 set -euo pipefail
+
+REPO="https://github.com/scrxpted7327/ai_router.git"
+APP_DIR="/opt/ai-router"
+SERVICE_USER="airouter"
 
 echo "==> Updating system..."
 apt-get update -y && apt-get upgrade -y
@@ -15,11 +19,26 @@ apt-get update -y
 apt-get install -y python3.13 python3.13-venv python3.13-dev
 
 echo "==> Creating service user..."
-id -u airouter &>/dev/null || useradd -m -s /bin/bash airouter
+id -u $SERVICE_USER &>/dev/null || useradd -m -s /bin/bash $SERVICE_USER
 
-echo "==> Creating app directory..."
-mkdir -p /opt/ai-router
-chown airouter:airouter /opt/ai-router
+echo "==> Cloning repo..."
+git clone "$REPO" "$APP_DIR"
+chown -R $SERVICE_USER:$SERVICE_USER "$APP_DIR"
+
+echo "==> Installing Python deps..."
+sudo -u $SERVICE_USER python3.13 -m venv "$APP_DIR/.venv"
+sudo -u $SERVICE_USER "$APP_DIR/.venv/bin/pip" install -r "$APP_DIR/requirements.txt" -q
+
+echo "==> Installing systemd service..."
+cp "$APP_DIR/deploy/ai-router.service" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable ai-router
+
+echo "==> Installing nginx config..."
+cp "$APP_DIR/deploy/nginx-ai.conf" /etc/nginx/sites-available/ai-router
+ln -sf /etc/nginx/sites-available/ai-router /etc/nginx/sites-enabled/ai-router
+rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl enable nginx && systemctl reload nginx
 
 echo "==> Configuring firewall..."
 ufw allow OpenSSH
@@ -27,16 +46,9 @@ ufw allow 'Nginx HTTP'
 ufw --force enable
 
 echo ""
-echo "Done. Next steps:"
-echo "  1. su - airouter"
-echo "  2. git clone https://github.com/<your-user>/ai_router /opt/ai-router"
-echo "  3. cd /opt/ai-router"
-echo "  4. python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt"
-echo "  5. Copy .env:  scp .env root@<ip>:/opt/ai-router/.env"
-echo "  6. Install service + nginx:"
-echo "       cp deploy/ai-router.service /etc/systemd/system/"
-echo "       cp deploy/nginx-ai.conf /etc/nginx/sites-available/ai-router"
-echo "       ln -s /etc/nginx/sites-available/ai-router /etc/nginx/sites-enabled/"
-echo "       systemctl daemon-reload"
-echo "       systemctl enable --now ai-router"
-echo "       nginx -t && systemctl reload nginx"
+echo "======================================"
+echo "Bootstrap complete."
+echo "ONE STEP REMAINING:"
+echo "  scp .env root@\$(hostname -I | awk '{print \$1}'):/opt/ai-router/.env"
+echo "  systemctl start ai-router"
+echo "======================================"
