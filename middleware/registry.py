@@ -24,6 +24,7 @@ class ModelEntry:
     max_tokens: int = 8192
     base_url: str | None = None
     extra_headers: dict = field(default_factory=dict)
+    provider_label: str = ""
 
 
 def _env(key: str, default: str = "") -> str:
@@ -34,8 +35,25 @@ def build_registry() -> dict[str, ModelEntry]:
     reg: dict[str, ModelEntry] = {}
 
     def add(aliases: list[str], entry: ModelEntry) -> None:
-        for a in aliases:
-            reg[a] = entry
+        keys: list[str] = []
+        # Always index the canonical model_id and provider/model_id form.
+        canonical = entry.model_id.strip()
+        if canonical:
+            keys.append(canonical)
+            if "/" not in canonical:
+                keys.append(f"{entry.provider}/{canonical}")
+        keys.extend(aliases)
+        seen: set[str] = set()
+        for key in keys:
+            k = key.strip()
+            if not k or k in seen:
+                continue
+            seen.add(k)
+            reg[k] = entry
+            kl = k.lower()
+            if kl not in seen:
+                seen.add(kl)
+                reg[kl] = entry
 
     # ── Claude via GitHub Copilot ─────────────────────────────────────────────
     cop_key = _env("GITHUB_COPILOT_TOKEN")
@@ -227,22 +245,47 @@ def get(model_name: str) -> ModelEntry | None:
 
 
 def list_models() -> list[dict]:
-    seen: set[str] = set()
-    out: list[dict] = []
-    for alias, e in sorted(REGISTRY.items()):
+    def source_label(entry: ModelEntry) -> str:
+        if entry.provider_label:
+            return entry.provider_label
+        base = (entry.base_url or "").lower()
+        if "githubcopilot.com" in base:
+            return "github-copilot"
+        if "openrouter.ai" in base:
+            return "openrouter"
+        if "minimaxi.chat" in base:
+            return "opencode zen"
+        if "opencode" in base:
+            return "opencode"
+        if "groq.com" in base:
+            return "groq"
+        if "cerebras.ai" in base:
+            return "cerebras"
+        if "bigmodel.cn" in base:
+            return "zai"
+        if "kilo.ai" in base:
+            return "kilo"
+        return entry.provider
+
+    # Return one row per canonical model, not per alias.
+    by_canonical: dict[tuple[str, str, str], ModelEntry] = {}
+    for e in REGISTRY.values():
         canonical = (e.provider, e.model_id, e.base_url or "")
-        is_primary = canonical not in seen
-        seen.add(canonical)
+        by_canonical.setdefault(canonical, e)
+
+    out: list[dict] = []
+    for _key, e in sorted(by_canonical.items(), key=lambda kv: kv[0][1]):
         out.append({
-            "id": alias,
+            "id": e.model_id,
             "object": "model",
-            "owned_by": e.provider,
+            "owned_by": source_label(e),
+            "provider_api": e.provider,
             "name": e.name,
             "reasoning": e.reasoning,
             "vision": e.vision,
             "context_window": e.context_window,
             "max_tokens": e.max_tokens,
-            "primary": is_primary,
+            "primary": True,
         })
     return out
 

@@ -33,6 +33,16 @@ def test_policy_pick_prefers_effort_then_preference(monkeypatch) -> None:
     assert picked.model_id == "model-a"
 
 
+def test_effort_distance_supports_default_and_xhigh() -> None:
+    assert app_module._effort_distance("default", "medium") == 0
+    assert app_module._effort_distance("xhigh", "high") == 1
+    assert app_module._effort_distance("low", "xhigh") == 3
+
+
+def test_target_effort_uses_default_for_general_task() -> None:
+    assert app_module._target_effort_for_task("nuanced_coding") == "default"
+
+
 def test_policy_pick_returns_none_without_matching_classification(monkeypatch) -> None:
     monkeypatch.setattr(app_module.reg, "get", lambda model_id: None)
     enabled = {"model-x"}

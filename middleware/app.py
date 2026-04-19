@@ -56,7 +56,7 @@ ALLOWED_CLASSIFICATIONS = {
     "multimodal",
     "fast_simple",
 }
-ALLOWED_EFFORTS = {"low", "medium", "high"}
+ALLOWED_EFFORTS = {"default", "low", "medium", "high", "xhigh"}
 
 log = logging.getLogger("ai_router")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -156,9 +156,11 @@ def _model_effort_guess(model_id: str) -> str:
     text = model_id.lower()
     if any(k in text for k in ("flash", "instant", "fast", "mini", "haiku", "8b")):
         return "low"
-    if any(k in text for k in ("opus", "r1", "reason", "70b", "heavy")):
+    if any(k in text for k in ("o1", "o3", "r1", "reason", "70b", "heavy", "xhigh")):
+        return "xhigh"
+    if any(k in text for k in ("opus", "gpt-5", "high")):
         return "high"
-    return "medium"
+    return "default"
 
 
 async def _model_control_index() -> tuple[set[str], dict[str, dict[str, str]]]:
@@ -178,7 +180,7 @@ async def _model_control_index() -> tuple[set[str], dict[str, dict[str, str]]]:
             enabled.add(model_id)
         meta[model_id] = {
             "classification": (row.classification if row else _model_classification_guess(model_id)) or "",
-            "effort": (row.effort if row else _model_effort_guess(model_id)) or "medium",
+            "effort": (row.effort if row else _model_effort_guess(model_id)) or "default",
         }
     return enabled, meta
 
@@ -188,11 +190,11 @@ def _target_effort_for_task(task_type: str) -> str:
         return "high"
     if task_type == "fast_simple":
         return "low"
-    return "medium"
+    return "default"
 
 
 def _effort_distance(candidate: str, target: str) -> int:
-    order = {"low": 0, "medium": 1, "high": 2}
+    order = {"low": 0, "medium": 1, "default": 1, "high": 2, "xhigh": 3}
     return abs(order.get(candidate, 1) - order.get(target, 1))
 
 
@@ -217,7 +219,7 @@ def _policy_pick_for_task(
 
     candidates.sort(
         key=lambda model_id: (
-            _effort_distance(meta.get(model_id, {}).get("effort", "medium"), target_effort),
+            _effort_distance(meta.get(model_id, {}).get("effort", "default"), target_effort),
             preferred_pos.get(model_id, 10_000),
             model_id,
         )
@@ -328,7 +330,7 @@ async def get_model_controls(_admin=Depends(require_admin)) -> dict:
                 "provider": model.get("owned_by") or "",
                 "enabled": bool(row.enabled),
                 "classification": row.classification or "",
-                "effort": row.effort or "medium",
+                "effort": row.effort or "default",
             }
         )
     return {"models": controls}
@@ -350,7 +352,7 @@ async def set_model_controls(payload: dict, _admin=Depends(require_admin)) -> di
 
             enabled = bool(item.get("enabled", True))
             classification = str(item.get("classification") or "").strip().lower()
-            effort = str(item.get("effort") or "medium").strip().lower()
+            effort = str(item.get("effort") or "default").strip().lower()
 
             if classification not in ALLOWED_CLASSIFICATIONS:
                 raise HTTPException(status_code=400, detail=f"Invalid classification for {model_id}")

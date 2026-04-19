@@ -332,6 +332,54 @@ function renderTokenMeta() {
   }
 }
 
+function groupModelControls(models) {
+  const groups = new Map();
+  for (const model of models || []) {
+    const provider = model.provider || "unknown";
+    if (!groups.has(provider)) groups.set(provider, []);
+    groups.get(provider).push(model);
+  }
+  return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+function syncProviderToggle(container) {
+  if (!container) return;
+  const toggle = container.querySelector("[data-provider-toggle]");
+  const boxes = Array.from(
+    container.querySelectorAll("[data-policy-row] [data-field='enabled']")
+  );
+  if (!toggle || !boxes.length) return;
+
+  const enabledCount = boxes.filter((box) => box.checked).length;
+  toggle.indeterminate = enabledCount > 0 && enabledCount < boxes.length;
+  toggle.checked = enabledCount === boxes.length;
+}
+
+function syncAllProviderToggles() {
+  document.querySelectorAll(".policy-provider").forEach((container) => {
+    syncProviderToggle(container);
+  });
+}
+
+function applyProviderEnabled(container, checked) {
+  if (!container) return;
+  container
+    .querySelectorAll("[data-policy-row] [data-field='enabled']")
+    .forEach((box) => {
+      box.checked = checked;
+    });
+  syncProviderToggle(container);
+}
+
+function applyProviderEffort(container, effort) {
+  if (!container) return;
+  container
+    .querySelectorAll("[data-policy-row] [data-field='effort']")
+    .forEach((sel) => {
+      sel.value = effort;
+    });
+}
+
 function renderModelPolicy() {
   const host = $("#model-policy-table");
   if (!host) return;
@@ -353,39 +401,70 @@ function renderModelPolicy() {
     "multimodal",
     "fast_simple",
   ];
-  const effortOptions = ["low", "medium", "high"];
+  const effortOptions = ["default", "low", "medium", "high", "xhigh"];
 
-  const rows = state.modelControls
-    .map((m) => {
-      const classSelect = classOptions
-        .map(
-          (opt) =>
-            `<option value="${opt}" ${m.classification === opt ? "selected" : ""}>${
-              opt || "(auto)"
-            }</option>`
-        )
+  const groups = groupModelControls(state.modelControls);
+  const sections = groups
+    .map(([provider, models]) => {
+      const rows = models
+        .map((m) => {
+          const classSelect = classOptions
+            .map(
+              (opt) =>
+                `<option value="${opt}" ${m.classification === opt ? "selected" : ""}>${
+                  opt || "(auto)"
+                }</option>`
+            )
+            .join("");
+          const effortSelect = effortOptions
+            .map(
+              (opt) =>
+                `<option value="${opt}" ${m.effort === opt ? "selected" : ""}>${opt}</option>`
+            )
+            .join("");
+          return `<tr data-policy-row data-model-id="${escapeHtml(m.id)}">
+            <td class="mono">${escapeHtml(m.id)}</td>
+            <td><input data-field="enabled" type="checkbox" ${m.enabled ? "checked" : ""}></td>
+            <td><select data-field="classification">${classSelect}</select></td>
+            <td><select data-field="effort">${effortSelect}</select></td>
+          </tr>`;
+        })
         .join("");
-      const effortSelect = effortOptions
-        .map(
-          (opt) => `<option value="${opt}" ${m.effort === opt ? "selected" : ""}>${opt}</option>`
-        )
-        .join("");
-      return `<tr data-policy-row data-model-id="${escapeHtml(m.id)}">
-        <td class="mono">${escapeHtml(m.id)}</td>
-        <td>${escapeHtml(m.provider || "")}</td>
-        <td><input data-field="enabled" type="checkbox" ${m.enabled ? "checked" : ""}></td>
-        <td><select data-field="classification">${classSelect}</select></td>
-        <td><select data-field="effort">${effortSelect}</select></td>
-      </tr>`;
+
+      return `<details class="policy-provider" data-provider="${escapeHtml(provider)}" open>
+        <summary>
+          <div class="provider-head">
+            <span class="provider-title">${escapeHtml(provider)}</span>
+            <span class="provider-meta">${models.length} model${models.length === 1 ? "" : "s"}</span>
+          </div>
+          <div class="provider-actions" onclick="event.stopPropagation()">
+            <button type="button" class="btn" data-provider-action="enable">Enable all</button>
+            <button type="button" class="btn" data-provider-action="disable">Disable all</button>
+            <button type="button" class="btn" data-provider-action="effort-default">Effort: default</button>
+            <button type="button" class="btn" data-provider-action="effort-low">Effort: low</button>
+            <button type="button" class="btn" data-provider-action="effort-medium">Effort: medium</button>
+            <button type="button" class="btn" data-provider-action="effort-high">Effort: high</button>
+            <button type="button" class="btn" data-provider-action="effort-xhigh">Effort: xhigh</button>
+          </div>
+          <label class="provider-toggle" onclick="event.stopPropagation()">
+            <input type="checkbox" data-provider-toggle="${escapeHtml(provider)}">
+            <span>Enable all</span>
+          </label>
+        </summary>
+        <div class="table-wrap">
+          <table class="policy-table">
+            <thead>
+              <tr><th>Model</th><th>Enabled</th><th>Classification</th><th>Effort</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </details>`;
     })
     .join("");
 
-  host.innerHTML = `<table class="policy-table">
-    <thead>
-      <tr><th>Model</th><th>Provider</th><th>Enabled</th><th>Classification</th><th>Effort</th></tr>
-    </thead>
-    <tbody>${rows}</tbody>
-  </table>`;
+  host.innerHTML = `<div class="policy-groups">${sections}</div>`;
+  syncAllProviderToggles();
 }
 
 function selectConversation(id) {
@@ -723,6 +802,59 @@ function wire() {
       showTerminalStatus("Model policy saved", "ok");
     } catch (err) {
       showTerminalStatus(String(err.message || err), "error");
+    }
+  });
+
+  $("#model-policy-table")?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+
+    if (target.matches("[data-provider-toggle]")) {
+      const providerBox = target.closest(".policy-provider");
+      if (!providerBox) return;
+      applyProviderEnabled(providerBox, target.checked);
+      return;
+    }
+
+    if (target.matches("[data-policy-row] [data-field='enabled']")) {
+      syncProviderToggle(target.closest(".policy-provider"));
+    }
+  });
+
+  $("#model-policy-table")?.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const actionBtn = target.closest("[data-provider-action]");
+    if (!actionBtn) return;
+    const providerBox = actionBtn.closest(".policy-provider");
+    if (!providerBox) return;
+    const action = actionBtn.getAttribute("data-provider-action");
+    if (action === "enable") {
+      applyProviderEnabled(providerBox, true);
+      return;
+    }
+    if (action === "disable") {
+      applyProviderEnabled(providerBox, false);
+      return;
+    }
+    if (action === "effort-default") {
+      applyProviderEffort(providerBox, "default");
+      return;
+    }
+    if (action === "effort-low") {
+      applyProviderEffort(providerBox, "low");
+      return;
+    }
+    if (action === "effort-medium") {
+      applyProviderEffort(providerBox, "medium");
+      return;
+    }
+    if (action === "effort-high") {
+      applyProviderEffort(providerBox, "high");
+      return;
+    }
+    if (action === "effort-xhigh") {
+      applyProviderEffort(providerBox, "xhigh");
     }
   });
 

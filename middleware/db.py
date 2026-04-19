@@ -60,7 +60,7 @@ class ModelControl(Base):
     model_id = Column(String, primary_key=True)
     enabled = Column(Boolean, default=True, nullable=False)
     classification = Column(String, default="", nullable=False)
-    effort = Column(String, default="medium", nullable=False)
+    effort = Column(String, default="default", nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
@@ -101,5 +101,5 @@ async def init_db() -> None:
         model_control_col_names = {str(row[1]) for row in model_control_cols}
         if model_control_cols and "effort" not in model_control_col_names:
             await conn.execute(
-                text("ALTER TABLE model_controls ADD COLUMN effort VARCHAR NOT NULL DEFAULT 'medium'")
+                text("ALTER TABLE model_controls ADD COLUMN effort VARCHAR NOT NULL DEFAULT 'default'")
             )
