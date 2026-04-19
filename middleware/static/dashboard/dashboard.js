@@ -31,6 +31,7 @@ const state = {
   lastToken: "",
   modelControls: null,
   autoRouterConfig: null,
+  providerSettings: null,
   providerTokens: [],       // [{provider_id, token_prefix, updated_at}]
   adminUsers: null,
   adminSelectedUser: null,
@@ -308,6 +309,19 @@ async function fetchAutoRouterConfig() {
   state.autoRouterConfig = data.configs || {};
 }
 
+async function fetchProviderSettings() {
+  if (!state.user?.is_admin) {
+    state.providerSettings = null;
+    return;
+  }
+  const r = await api("/dashboard/provider-settings");
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(data.detail || `GET /dashboard/provider-settings ${r.status}`);
+  }
+  state.providerSettings = data.settings || {};
+}
+
 async function saveModelControls() {
   const rows = Array.from(document.querySelectorAll("[data-policy-row]"));
   const models = rows.map((row) => ({
@@ -352,6 +366,29 @@ async function saveAutoRouterConfig() {
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
     throw new Error(data.detail || "Failed to save auto-router config");
+  }
+}
+
+async function saveProviderSettings() {
+  const settings = {};
+  const providers = ["opencode", "kilo", "github-copilot"];
+
+  for (const provider of providers) {
+    settings[provider] = {};
+    const baseUrlInput = document.getElementById(`provider-setting-${provider}-base-url`);
+    if (baseUrlInput) {
+      const value = baseUrlInput.value.trim();
+      if (value) settings[provider].base_url = value;
+    }
+  }
+
+  const r = await api("/dashboard/provider-settings", {
+    method: "POST",
+    body: JSON.stringify({ settings }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(data.detail || "Failed to save provider settings");
   }
 }
 
@@ -711,6 +748,54 @@ function renderAutoRouterConfig() {
   host.innerHTML = `<div class="policy-groups">${tierSections}</div>`;
 }
 
+function renderProviderSettings() {
+  const host = $("#provider-settings-content");
+  if (!host) return;
+
+  if (!state.user?.is_admin) {
+    host.innerHTML = '<div class="empty">Admin access required.</div>';
+    return;
+  }
+
+  const settings = state.providerSettings || {};
+
+  const providers = [
+    { id: "opencode", label: "OpenCode", envKey: "OPENCODE_API_KEY", baseUrlKey: "OPENCODE_BASE_URL",
+      note: "Set base URL to https://api.opencode.ai/v1 (main) or https://opencode.ai/zen/v1 (Zen)" },
+    { id: "kilo", label: "Kilo AI", envKey: "KILO_API_KEY", baseUrlKey: "KILO_BASE_URL",
+      note: "Base URL: https://api.kilo.ai/api/gateway" },
+    { id: "github-copilot", label: "GitHub Copilot", envKey: "GITHUB_COPILOT_TOKEN", baseUrlKey: "COPILOT_BASE_URL",
+      note: "Base URL: https://api.githubcopilot.com" },
+  ];
+
+  const sections = providers.map(provider => {
+    const providerSettings = settings[provider.id] || {};
+    const baseUrl = providerSettings.base_url || "";
+
+    return `<details class="policy-provider" open>
+      <summary>
+        <div class="provider-head">
+          <span class="provider-title">${escapeHtml(provider.label)}</span>
+          <span class="provider-meta">${escapeHtml(provider.envKey)}</span>
+        </div>
+      </summary>
+      <div class="table-wrap">
+        <p class="panel-note" style="margin: 0.5rem 0">${escapeHtml(provider.note)}</p>
+        <table class="policy-table">
+          <tbody>
+            <tr>
+              <td><strong>Base URL Override</strong></td>
+              <td><input type="text" id="provider-setting-${provider.id}-base-url" value="${escapeHtml(baseUrl)}" placeholder="(leave empty for default)" style="width: 100%"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </details>`;
+  }).join("");
+
+  host.innerHTML = `<div class="policy-groups">${sections}</div>`;
+}
+
 function selectConversation(id) {
   fetchConversation(id).then(() => {
     renderConversations();
@@ -900,6 +985,7 @@ async function setTab(name) {
       auth: "Auth",
       terminal: "Terminal",
       "model-policy": "Model Policy",
+      "provider-settings": "Provider Settings",
     }[name] || "";
 
   if (name === "models") renderModels();
@@ -928,6 +1014,10 @@ async function setTab(name) {
     await fetchAutoRouterConfig();
     renderAutoRouterConfig();
     renderModelPolicy();
+  }
+  if (name === "provider-settings") {
+    await fetchProviderSettings();
+    renderProviderSettings();
   }
 }
 
@@ -1103,6 +1193,16 @@ function wire() {
       await fetchAutoRouterConfig();
       renderAutoRouterConfig();
       showTerminalStatus("Auto-router config saved", "ok");
+    } catch (err) {
+      showTerminalStatus(String(err.message || err), "error");
+    }
+  });
+  $("#btn-provider-settings-save")?.addEventListener("click", async () => {
+    try {
+      await saveProviderSettings();
+      await fetchProviderSettings();
+      renderProviderSettings();
+      showTerminalStatus("Provider settings saved", "ok");
     } catch (err) {
       showTerminalStatus(String(err.message || err), "error");
     }

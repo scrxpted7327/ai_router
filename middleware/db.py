@@ -94,6 +94,16 @@ class AutoRouterConfig(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class ProviderSetting(Base):
+    """Provider-specific configuration and behavior overrides."""
+
+    __tablename__ = "provider_settings"
+
+    provider_id = Column(String, primary_key=True)  # e.g. "opencode", "github-copilot"
+    settings_json = Column(Text, default="{}", nullable=False)  # JSON object of settings
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Session(Base):
     __tablename__ = "sessions"
 

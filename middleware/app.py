@@ -38,7 +38,7 @@ from . import registry as reg
 from .anthropic_proxy import router as anthropic_router
 from .auth import COOKIE_NAME, require_admin, require_whitelisted, router as auth_router
 from .compactor import compact, needs_compaction
-from .db import AutoRouterConfig, ModelControl, Session, SessionLocal, User, init_db
+from .db import AutoRouterConfig, ModelControl, ProviderSetting, Session, SessionLocal, User, init_db
 from .format_adapter import normalise_request, stream_as_responses_api
 from .router import route
 from .providers import anthropic as anthropic_provider
@@ -430,6 +430,46 @@ async def set_auto_router_config(payload: dict, _admin=Depends(require_admin)) -
                     db.add(row)
 
                 row.model_ids = json.dumps(model_ids)
+
+        await db.commit()
+
+    return {"ok": True}
+
+
+@app.get("/dashboard/provider-settings")
+async def get_provider_settings(_admin=Depends(require_admin)) -> dict:
+    """Get provider-specific settings."""
+    async with SessionLocal() as db:
+        rows = (await db.execute(select(ProviderSetting))).scalars().all()
+
+    settings = {}
+    for row in rows:
+        try:
+            settings[row.provider_id] = json.loads(row.settings_json)
+        except (json.JSONDecodeError, TypeError):
+            settings[row.provider_id] = {}
+
+    return {"settings": settings}
+
+
+@app.post("/dashboard/provider-settings")
+async def set_provider_settings(payload: dict, _admin=Depends(require_admin)) -> dict:
+    """Set provider-specific settings. payload: {settings: {provider_id: {key: value}}}"""
+    settings = payload.get("settings")
+    if not isinstance(settings, dict):
+        raise HTTPException(status_code=400, detail="settings must be a dict")
+
+    async with SessionLocal() as db:
+        for provider_id, provider_settings in settings.items():
+            if not isinstance(provider_settings, dict):
+                continue
+
+            row = await db.get(ProviderSetting, provider_id)
+            if not row:
+                row = ProviderSetting(provider_id=provider_id)
+                db.add(row)
+
+            row.settings_json = json.dumps(provider_settings)
 
         await db.commit()
 
