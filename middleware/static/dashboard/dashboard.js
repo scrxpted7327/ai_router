@@ -691,22 +691,31 @@ function connectTerminal() {
 
   closeTerminalSocket();
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${scheme}://${window.location.host}/terminal`);
+  const wsUrl = `${scheme}://${window.location.host}/terminal`;
+  console.log("[Terminal] Connecting to:", wsUrl);
+  term.writeln(`[debug] Connecting to ${wsUrl}...\r\n`);
+
+  const ws = new WebSocket(wsUrl);
   state.terminal.socket = ws;
 
   ws.addEventListener("open", () => {
+    console.log("[Terminal] WebSocket opened");
     term.focus();
-    term.writeln("\r\n[connected] interactive pi shell\r\n");
+    term.writeln("\r\n[connected] WebSocket open, waiting for data...\r\n");
     showTerminalStatus("Connected", "ok");
   });
 
   ws.addEventListener("message", (event) => {
+    console.log("[Terminal] Message received:", event.data);
     let msg;
     try {
       msg = JSON.parse(event.data);
-    } catch {
+    } catch (e) {
+      console.error("[Terminal] JSON parse error:", e);
+      term.writeln(`\r\n[debug] Raw message: ${event.data}\r\n`);
       return;
     }
+    console.log("[Terminal] Parsed message:", msg);
     if (msg.type === "output") {
       term.write(msg.data || "");
       return;
@@ -721,13 +730,16 @@ function connectTerminal() {
     }
   });
 
-  ws.addEventListener("close", () => {
+  ws.addEventListener("close", (event) => {
+    console.log("[Terminal] WebSocket closed:", event.code, event.reason);
     if (state.terminal.socket === ws) state.terminal.socket = null;
-    term.writeln("\r\n[disconnected]\r\n");
+    term.writeln(`\r\n[disconnected: ${event.code}]\r\n`);
   });
 
-  ws.addEventListener("error", () => {
+  ws.addEventListener("error", (event) => {
+    console.error("[Terminal] WebSocket error:", event);
     showTerminalStatus("WebSocket failed", "error");
+    term.writeln("\r\n[WebSocket error - check browser console]\r\n");
   });
 
   if (!state.terminal.onDataBound) {

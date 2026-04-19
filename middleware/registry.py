@@ -16,8 +16,13 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import httpx
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
 
 MODELS_DEV_URL = "https://models.dev/api.json"
+OPENROUTER_MODELS_CACHE: dict[str, tuple[int, list]] = {}
 MODELS_DEV_CACHE_TTL = 60 * 60
 MODELS_DEV_CACHE_PATH = Path.home() / ".cache" / "ai_router" / "models.dev.json"
 BEDROCK_PROVIDER_ID = "amazon-bedrock"
