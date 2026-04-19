@@ -38,7 +38,7 @@ from . import registry as reg
 from .anthropic_proxy import router as anthropic_router
 from .auth import COOKIE_NAME, require_admin, require_whitelisted, router as auth_router
 from .compactor import compact, needs_compaction
-from .db import ModelControl, Session, SessionLocal, User, init_db
+from .db import AutoRouterConfig, ModelControl, Session, SessionLocal, User, init_db
 from .format_adapter import normalise_request, stream_as_responses_api
 from .router import route
 from .providers import anthropic as anthropic_provider
@@ -378,6 +378,64 @@ async def set_model_controls(payload: dict, _admin=Depends(require_admin)) -> di
     return {"ok": True}
 
 
+@app.get("/dashboard/auto-router-config")
+async def get_auto_router_config(_admin=Depends(require_admin)) -> dict:
+    """Get auto-router configuration (scrxpted/auto-free, auto-premium, auto-max)."""
+    tiers = ["auto-free", "auto-premium", "auto-max"]
+    task_types = ["heavy_reasoning", "code_generation", "nuanced_coding", "multimodal", "fast_simple"]
+
+    async with SessionLocal() as db:
+        configs_list = (await db.execute(select(AutoRouterConfig))).scalars().all()
+        configs_by_id = {c.id: c for c in configs_list}
+
+    result = {}
+    for tier in tiers:
+        result[tier] = {}
+        for task_type in task_types:
+            config_id = f"{tier}:{task_type}"
+            config = configs_by_id.get(config_id)
+            if config and config.model_ids:
+                try:
+                    result[tier][task_type] = json.loads(config.model_ids)
+                except (json.JSONDecodeError, TypeError):
+                    result[tier][task_type] = []
+            else:
+                result[tier][task_type] = []
+
+    return {"configs": result}
+
+
+@app.post("/dashboard/auto-router-config")
+async def set_auto_router_config(payload: dict, _admin=Depends(require_admin)) -> dict:
+    """Set auto-router configuration. payload: {configs: {tier: {task_type: [model_ids]}}}"""
+    configs = payload.get("configs")
+    if not isinstance(configs, dict):
+        raise HTTPException(status_code=400, detail="configs must be a dict")
+
+    async with SessionLocal() as db:
+        for tier, task_map in configs.items():
+            if not isinstance(task_map, dict):
+                continue
+            for task_type, model_ids in task_map.items():
+                if not isinstance(model_ids, list):
+                    continue
+
+                config_id = f"{tier}:{task_type}"
+                row = (
+                    await db.execute(select(AutoRouterConfig).where(AutoRouterConfig.id == config_id))
+                ).scalars().first()
+
+                if not row:
+                    row = AutoRouterConfig(id=config_id, tier=tier, task_type=task_type)
+                    db.add(row)
+
+                row.model_ids = json.dumps(model_ids)
+
+        await db.commit()
+
+    return {"ok": True}
+
+
 # ── Admin: user + provider-token management ───────────────────────────────────
 
 @app.get("/dashboard/users")
@@ -567,8 +625,9 @@ async def chat_completions(request: Request, user=Depends(require_whitelisted)) 
 
 # ── Core dispatch ─────────────────────────────────────────────────────────────
 
-def _auto_route_model(requested: str, task_type: str, enabled: set[str]) -> str | None:
+async def _auto_route_model(requested: str, task_type: str, enabled: set[str]) -> str | None:
     """Route auto-free/premium/max to actual models based on task classification."""
+    # Hardcoded fallback defaults
     AUTO_FREE_ROUTES = {
         "heavy_reasoning": ["deepseek-r1", "qwq-groq", "free"],
         "code_generation": ["deepseek-chat", "qwen", "free"],
@@ -600,6 +659,28 @@ def _auto_route_model(requested: str, task_type: str, enabled: set[str]) -> str 
         "auto-max": AUTO_MAX_ROUTES,
     }
 
+    # Extract tier from requested model
+    tier = requested.replace("scrxpted/", "")  # Normalize to "auto-free", "auto-premium", "auto-max"
+
+    # Try database configuration first
+    async with SessionLocal() as db:
+        config_id = f"{tier}:{task_type}"
+        config = (
+            await db.execute(select(AutoRouterConfig).where(AutoRouterConfig.id == config_id))
+        ).scalars().first()
+
+        if config and config.model_ids:
+            try:
+                candidates = json.loads(config.model_ids)
+                if isinstance(candidates, list) and candidates:
+                    for candidate in candidates:
+                        entry = reg.get(candidate)
+                        if entry and entry.model_id in enabled:
+                            return entry.model_id
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    # Fall back to hardcoded routes
     route_set = routes_map.get(requested)
     if not route_set:
         return None
@@ -631,7 +712,7 @@ async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
     if requested and entry and entry.base_url == "INTERNAL":
         decision = route(messages)
         task_type = getattr(decision.task_type, "value", str(decision.task_type))
-        auto_model_id = _auto_route_model(requested, task_type, enabled)
+        auto_model_id = await _auto_route_model(requested, task_type, enabled)
         if auto_model_id:
             entry = reg.get(auto_model_id)
             log.info("Auto-route '%s' [%s] → %s", requested, task_type, auto_model_id)

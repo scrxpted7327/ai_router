@@ -82,6 +82,18 @@ class ModelControl(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class AutoRouterConfig(Base):
+    """Configuration for scrxpted/auto-free, auto-premium, auto-max routing."""
+
+    __tablename__ = "auto_router_configs"
+
+    id = Column(String, primary_key=True)  # e.g. "auto-free:heavy_reasoning"
+    tier = Column(String, nullable=False)  # "auto-free" | "auto-premium" | "auto-max"
+    task_type = Column(String, nullable=False)  # "heavy_reasoning" | "code_generation" | etc
+    model_ids = Column(Text, default="[]", nullable=False)  # JSON array of model IDs (priority order)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Session(Base):
     __tablename__ = "sessions"
 
@@ -121,3 +133,4 @@ async def init_db() -> None:
             await conn.execute(
                 text("ALTER TABLE model_controls ADD COLUMN effort VARCHAR NOT NULL DEFAULT 'default'")
             )
+        # Auto-router table is created by Base.metadata.create_all above

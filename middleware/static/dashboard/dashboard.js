@@ -30,6 +30,7 @@ const state = {
   tokenMeta: null,
   lastToken: "",
   modelControls: null,
+  autoRouterConfig: null,
   providerTokens: [],       // [{provider_id, token_prefix, updated_at}]
   adminUsers: null,
   adminSelectedUser: null,
@@ -294,6 +295,19 @@ async function fetchModelControls() {
   state.modelControls = data.models || [];
 }
 
+async function fetchAutoRouterConfig() {
+  if (!state.user?.is_admin) {
+    state.autoRouterConfig = null;
+    return;
+  }
+  const r = await api("/dashboard/auto-router-config");
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(data.detail || `GET /dashboard/auto-router-config ${r.status}`);
+  }
+  state.autoRouterConfig = data.configs || {};
+}
+
 async function saveModelControls() {
   const rows = Array.from(document.querySelectorAll("[data-policy-row]"));
   const models = rows.map((row) => ({
@@ -309,6 +323,35 @@ async function saveModelControls() {
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
     throw new Error(data.detail || "Failed to save model policy");
+  }
+}
+
+async function saveAutoRouterConfig() {
+  const configs = {};
+  const tiers = ["auto-free", "auto-premium", "auto-max"];
+  const taskTypes = ["heavy_reasoning", "code_generation", "nuanced_coding", "multimodal", "fast_simple"];
+
+  for (const tier of tiers) {
+    configs[tier] = {};
+    for (const taskType of taskTypes) {
+      const inputId = `auto-router-${tier}-${taskType}`;
+      const input = document.getElementById(inputId);
+      if (input) {
+        const value = input.value.trim();
+        configs[tier][taskType] = value ? value.split(",").map(s => s.trim()).filter(Boolean) : [];
+      } else {
+        configs[tier][taskType] = [];
+      }
+    }
+  }
+
+  const r = await api("/dashboard/auto-router-config", {
+    method: "POST",
+    body: JSON.stringify({ configs }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(data.detail || "Failed to save auto-router config");
   }
 }
 
@@ -612,6 +655,62 @@ function renderModelPolicy() {
   syncAllProviderToggles();
 }
 
+function renderAutoRouterConfig() {
+  const host = $("#auto-router-config");
+  if (!host) return;
+
+  if (!state.user?.is_admin) {
+    host.innerHTML = '<div class="empty">Admin access required.</div>';
+    return;
+  }
+
+  const tiers = [
+    { id: "auto-free", label: "Auto Free" },
+    { id: "auto-premium", label: "Auto Premium" },
+    { id: "auto-max", label: "Auto Max" },
+  ];
+  const taskTypes = [
+    { id: "heavy_reasoning", label: "Heavy Reasoning" },
+    { id: "code_generation", label: "Code Generation" },
+    { id: "nuanced_coding", label: "Nuanced Coding" },
+    { id: "multimodal", label: "Multimodal" },
+    { id: "fast_simple", label: "Fast/Simple" },
+  ];
+
+  const configs = state.autoRouterConfig || {};
+
+  const tierSections = tiers.map(tier => {
+    const tierConfig = configs[tier.id] || {};
+    const rows = taskTypes.map(task => {
+      const modelIds = tierConfig[task.id] || [];
+      const value = modelIds.join(", ");
+      return `<tr>
+        <td><strong>${escapeHtml(task.label)}</strong></td>
+        <td><input type="text" id="auto-router-${tier.id}-${task.id}" value="${escapeHtml(value)}" placeholder="model-id-1, model-id-2, ..." style="width: 100%"></td>
+      </tr>`;
+    }).join("");
+
+    return `<details class="policy-provider" open>
+      <summary>
+        <div class="provider-head">
+          <span class="provider-title">${escapeHtml(tier.label)}</span>
+          <span class="provider-meta">scrxpted/${tier.id}</span>
+        </div>
+      </summary>
+      <div class="table-wrap">
+        <table class="policy-table">
+          <thead>
+            <tr><th>Task Type</th><th>Model IDs (comma-separated, priority order)</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </details>`;
+  }).join("");
+
+  host.innerHTML = `<div class="policy-groups">${tierSections}</div>`;
+}
+
 function selectConversation(id) {
   fetchConversation(id).then(() => {
     renderConversations();
@@ -826,6 +925,8 @@ async function setTab(name) {
   }
   if (name === "model-policy") {
     await fetchModelControls();
+    await fetchAutoRouterConfig();
+    renderAutoRouterConfig();
     renderModelPolicy();
   }
 }
@@ -992,6 +1093,16 @@ function wire() {
       await fetchModelControls();
       renderModelPolicy();
       showTerminalStatus("Model policy saved", "ok");
+    } catch (err) {
+      showTerminalStatus(String(err.message || err), "error");
+    }
+  });
+  $("#btn-auto-router-save")?.addEventListener("click", async () => {
+    try {
+      await saveAutoRouterConfig();
+      await fetchAutoRouterConfig();
+      renderAutoRouterConfig();
+      showTerminalStatus("Auto-router config saved", "ok");
     } catch (err) {
       showTerminalStatus(String(err.message || err), "error");
     }
