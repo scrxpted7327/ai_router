@@ -244,6 +244,118 @@ def _maybe_prefix_bedrock_model_id(model_id: str, region: str) -> str:
     return model_id
 
 
+def _openai_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    if not _env("OPENAI_API_KEY"):
+        return None
+    provider = ProviderConfig("openai", "openai", "openai", ("OPENAI_API_KEY",), base_url="https://api.openai.com/v1")
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-4o",           "GPT-4o",        ("gpt4o",),         False, True,  128_000, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-4o-mini",      "GPT-4o Mini",   ("gpt4o-mini",),    False, True,  128_000, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "o1",               "o1",            ("openai-o1",),     True,  True,  200_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "o1-mini",          "o1 Mini",       ("openai-o1-mini",),True,  False, 128_000, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "o3",               "o3",            ("openai-o3",),     True,  True,  200_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "o3-mini",          "o3 Mini",       ("openai-o3-mini",),True,  False, 200_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "o4-mini",          "o4 Mini",       ("openai-o4-mini",),True,  True,  200_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5",            "GPT-5",         ("openai-gpt5",),   True,  True,  1_000_000, 32_768),
+    )
+    return provider, models
+
+
+def _mistral_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    if not _env("MISTRAL_API_KEY"):
+        return None
+    provider = ProviderConfig("mistral", "openai", "mistral", ("MISTRAL_API_KEY",), base_url="https://api.mistral.ai/v1")
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "mistral-large-latest",  "Mistral Large",    ("mistral-large",),   False, False, 131_072, 4_096),
+        CatalogModel(provider.id, provider.api, provider.label, "mistral-medium-latest", "Mistral Medium",   ("mistral-medium",),  False, False, 131_072, 4_096),
+        CatalogModel(provider.id, provider.api, provider.label, "mistral-small-latest",  "Mistral Small",    ("mistral-small",),   False, False, 131_072, 4_096),
+        CatalogModel(provider.id, provider.api, provider.label, "codestral-latest",      "Codestral",        ("codestral",),       False, False, 256_000, 4_096),
+        CatalogModel(provider.id, provider.api, provider.label, "mistral-nemo",          "Mistral Nemo",     ("mistral-nemo",),    False, False, 131_072, 4_096),
+        CatalogModel(provider.id, provider.api, provider.label, "pixtral-large-latest",  "Pixtral Large",    ("pixtral-large",),   False, True,  131_072, 4_096),
+    )
+    return provider, models
+
+
+def _deepseek_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    if not _env("DEEPSEEK_API_KEY"):
+        return None
+    provider = ProviderConfig("deepseek", "openai", "deepseek", ("DEEPSEEK_API_KEY",), base_url="https://api.deepseek.com/v1")
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "deepseek-chat",     "DeepSeek V3",   ("deepseek-v3-direct", "deepseek-direct"), False, False, 163_840, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "deepseek-reasoner", "DeepSeek R1",   ("deepseek-r1-direct",),                   True,  False, 163_840, 8_192),
+    )
+    return provider, models
+
+
+def _xai_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    if not _env("XAI_API_KEY"):
+        return None
+    provider = ProviderConfig("xai", "openai", "xai", ("XAI_API_KEY",), base_url="https://api.x.ai/v1")
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "grok-3",        "Grok 3",        ("grok",),        True,  False, 131_072, 131_072),
+        CatalogModel(provider.id, provider.api, provider.label, "grok-3-mini",   "Grok 3 Mini",   ("grok-mini",),   True,  False, 131_072, 131_072),
+        CatalogModel(provider.id, provider.api, provider.label, "grok-3-fast",   "Grok 3 Fast",   ("grok-fast",),   False, False, 131_072, 131_072),
+    )
+    return provider, models
+
+
+def _together_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    if not _env("TOGETHER_API_KEY"):
+        return None
+    provider = ProviderConfig("together", "openai", "together", ("TOGETHER_API_KEY",), base_url="https://api.together.xyz/v1")
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "meta-llama/Llama-3.3-70B-Instruct-Turbo",   "Llama 3.3 70B (Together)",    ("llama-together",),         False, False, 131_072, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo", "Llama 3.1 405B (Together)", ("llama-405b",),           False, False, 130_815, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", "Llama 4 Maverick (Together)", ("llama-4-maverick",), False, True,  524_288, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "meta-llama/Llama-4-Scout-17B-16E-Instruct",  "Llama 4 Scout (Together)",    ("llama-4-scout",),          False, True,  131_072, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "deepseek-ai/DeepSeek-R1",                    "DeepSeek R1 (Together)",      ("deepseek-r1-together",),   True,  False, 163_840, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "Qwen/QwQ-32B-Preview",                       "QwQ 32B (Together)",          ("qwq-together",),           True,  False, 32_768,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "mistralai/Mistral-7B-Instruct-v0.3",         "Mistral 7B (Together)",       ("mistral-7b-together",),    False, False, 32_768,  4_096),
+    )
+    return provider, models
+
+
+def _perplexity_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    if not _env("PERPLEXITY_API_KEY"):
+        return None
+    provider = ProviderConfig("perplexity", "openai", "perplexity", ("PERPLEXITY_API_KEY",), base_url="https://api.perplexity.ai")
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "sonar-pro",              "Sonar Pro",              ("sonar-pro",),          False, False, 200_000, 8_000),
+        CatalogModel(provider.id, provider.api, provider.label, "sonar",                  "Sonar",                  ("sonar",),              False, False, 200_000, 8_000),
+        CatalogModel(provider.id, provider.api, provider.label, "sonar-reasoning-pro",    "Sonar Reasoning Pro",    ("sonar-reason-pro",),   True,  False, 128_000, 8_000),
+        CatalogModel(provider.id, provider.api, provider.label, "sonar-reasoning",        "Sonar Reasoning",        ("sonar-reason",),       True,  False, 128_000, 8_000),
+        CatalogModel(provider.id, provider.api, provider.label, "sonar-deep-research",    "Sonar Deep Research",    ("sonar-research",),     True,  False, 128_000, 8_000),
+    )
+    return provider, models
+
+
+def _fireworks_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    if not _env("FIREWORKS_API_KEY"):
+        return None
+    provider = ProviderConfig("fireworks", "openai", "fireworks", ("FIREWORKS_API_KEY",), base_url="https://api.fireworks.ai/inference/v1")
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "accounts/fireworks/models/llama-v3p3-70b-instruct",    "Llama 3.3 70B (Fireworks)",    ("llama-fireworks",),         False, False, 131_072, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "accounts/fireworks/models/llama-v3p1-405b-instruct",   "Llama 3.1 405B (Fireworks)",   ("llama-405b-fireworks",),    False, False, 131_072, 4_096),
+        CatalogModel(provider.id, provider.api, provider.label, "accounts/fireworks/models/deepseek-r1",                "DeepSeek R1 (Fireworks)",      ("deepseek-r1-fireworks",),   True,  False, 163_840, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "accounts/fireworks/models/qwen3-235b-a22b",            "Qwen 3 235B (Fireworks)",      ("qwen3-235b-fireworks",),    True,  False, 131_072, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "accounts/fireworks/models/mixtral-8x22b-instruct",     "Mixtral 8x22B (Fireworks)",    ("mixtral-fireworks",),       False, False, 65_536,  4_096),
+    )
+    return provider, models
+
+
+def _cohere_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    if not _env("COHERE_API_KEY"):
+        return None
+    provider = ProviderConfig("cohere", "openai", "cohere", ("COHERE_API_KEY",), base_url="https://api.cohere.ai/compatibility/v1")
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "command-a-03-2025",       "Command A",           ("command-a", "cohere"),         False, False, 256_000, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "command-r-plus-08-2024",  "Command R+",          ("command-r-plus",),             False, False, 128_000, 4_096),
+        CatalogModel(provider.id, provider.api, provider.label, "command-r-08-2024",       "Command R",           ("command-r",),                  False, False, 128_000, 4_096),
+        CatalogModel(provider.id, provider.api, provider.label, "command-r7b-12-2024",     "Command R 7B",        ("command-r7b",),                False, False, 128_000, 4_096),
+    )
+    return provider, models
+
+
 def _copilot_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
     token = _env("GITHUB_COPILOT_TOKEN")
     if not token:
@@ -260,12 +372,18 @@ def _copilot_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | Non
         },
     )
     models = (
-        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-5", "Claude Opus 4.5 (Copilot)", ("claude-opus", "opus"), True, True, 200_000, 32_000),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4-5", "Claude Sonnet 4.5 (Copilot)", ("claude-sonnet", "claude", "sonnet"), True, True, 200_000, 16_000),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-haiku-4-5-20251001", "Claude Haiku 4.5 (Copilot)", ("claude-haiku", "haiku"), False, True, 200_000, 8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet (Copilot)", ("claude-3-5-sonnet",), False, True, 200_000, 8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-3-5-haiku-20241022", "Claude 3.5 Haiku (Copilot)", ("claude-3-5-haiku",), False, True, 200_000, 8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-4o", "GitHub Copilot (GPT-4o)", ("github-copilot", "copilot"), False, True, 128_000, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7",         "Claude Opus 4.7 (Copilot)",    ("claude-opus", "opus"),        True,  True,  200_000, 32_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-5",         "Claude Opus 4.5 (Copilot)",    ("claude-opus-4-5-copilot",),   True,  True,  200_000, 32_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4-6",       "Claude Sonnet 4.6 (Copilot)", ("claude-sonnet", "claude", "sonnet"), False, True, 200_000, 16_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4-5",       "Claude Sonnet 4.5 (Copilot)", ("claude-sonnet-4-5-copilot",), True,  True,  200_000, 16_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-haiku-4-5-20251001","Claude Haiku 4.5 (Copilot)",  ("claude-haiku", "haiku"),      False, True,  200_000,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-3-5-sonnet-20241022","Claude 3.5 Sonnet (Copilot)",("claude-3-5-sonnet",),         False, True,  200_000,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-3-5-haiku-20241022","Claude 3.5 Haiku (Copilot)", ("claude-3-5-haiku",),          False, True,  200_000,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-4o",                  "GPT-4o (Copilot)",            ("github-copilot", "copilot"),  False, True,  128_000, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-4.1",                 "GPT-4.1 (Copilot)",           ("gpt-4.1-copilot",),           False, True,  128_000, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.1",                 "GPT-5.1 (Copilot)",           ("gpt-5.1-copilot",),           True,  True,  1_000_000, 32_768),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-pro",          "Gemini 2.5 Pro (Copilot)",    ("gemini-pro-copilot",),        True,  True,  1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "grok-code-fast-1",        "Grok Code Fast (Copilot)",    ("grok-copilot",),              False, False, 131_072,  8_192),
     )
     return provider, models
 
@@ -275,9 +393,15 @@ def _groq_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
         return None
     provider = ProviderConfig("groq", "openai", "groq", ("GROQ_API_KEY",), base_url="https://api.groq.com/openai/v1")
     models = (
-        CatalogModel(provider.id, provider.api, provider.label, "llama-3.3-70b-versatile", "Llama 3.3 70B (Groq)", ("llama-3.3-70b", "llama", "groq"), False, False, 128_000, 32_768),
-        CatalogModel(provider.id, provider.api, provider.label, "llama-3.1-8b-instant", "Llama 3.1 8B Instant (Groq)", ("llama-fast",), False, False, 128_000, 8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "deepseek-r1-distill-llama-70b", "DeepSeek R1 Distill (Groq)", ("deepseek-r1-groq",), True, False, 128_000, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "llama-3.3-70b-versatile",       "Llama 3.3 70B (Groq)",          ("llama-3.3-70b", "llama", "groq"), False, False, 128_000, 32_768),
+        CatalogModel(provider.id, provider.api, provider.label, "llama-3.1-8b-instant",           "Llama 3.1 8B Instant (Groq)",   ("llama-fast",),                    False, False, 128_000,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "llama3-70b-8192",                "Llama 3 70B (Groq)",            ("llama3-70b-groq",),               False, False,   8_192,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "llama3-8b-8192",                 "Llama 3 8B (Groq)",             ("llama3-8b-groq",),                False, False,   8_192,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "deepseek-r1-distill-llama-70b",  "DeepSeek R1 Distill (Groq)",    ("deepseek-r1-groq",),              True,  False, 128_000, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "qwen-qwq-32b",                   "QwQ 32B (Groq)",                ("qwq-groq",),                      True,  False, 131_072,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "mistral-saba-24b",               "Mistral Saba 24B (Groq)",       ("mistral-saba-groq",),             False, False,  32_768,  4_096),
+        CatalogModel(provider.id, provider.api, provider.label, "gemma2-9b-it",                   "Gemma 2 9B (Groq)",             ("gemma2-groq",),                   False, False,   8_192,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "allam-2-7b",                     "Allam 2 7B (Groq)",             ("allam-groq",),                    False, False,   8_192,  8_192),
     )
     return provider, models
 
@@ -305,12 +429,24 @@ def _openrouter_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | 
         extra_headers={"HTTP-Referer": "http://localhost", "X-Title": "ai-router"},
     )
     models = (
-        CatalogModel(provider.id, provider.api, provider.label, "auto", "Auto (OpenRouter)", ("openrouter",), False, False, 200_000, 16_384),
-        CatalogModel(provider.id, provider.api, provider.label, "deepseek/deepseek-chat", "DeepSeek V3 (OpenRouter)", ("deepseek", "deepseek-v3"), False, False, 163_840, 8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "deepseek/deepseek-r1", "DeepSeek R1 (OpenRouter)", ("deepseek-r1",), True, False, 163_840, 8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "qwen/qwen-2.5-72b-instruct", "Qwen 2.5 72B (OpenRouter)", ("qwen", "qwen-2.5"), False, False, 131_072, 8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "mistralai/mistral-7b-instruct:free", "Mistral 7B (free)", ("free", "free-mistral"), False, False, 32_768, 4_096),
-        CatalogModel(provider.id, provider.api, provider.label, "meta-llama/llama-3.1-8b-instruct:free", "Llama 3.1 8B (free)", ("free-llama",), False, False, 131_072, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "auto",                                    "Auto (OpenRouter)",           ("openrouter",),           False, False, 200_000, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "anthropic/claude-opus-4-7",               "Claude Opus 4.7 (OR)",        ("claude-opus-or",),       True,  True,  200_000, 32_000),
+        CatalogModel(provider.id, provider.api, provider.label, "anthropic/claude-sonnet-4-6",             "Claude Sonnet 4.6 (OR)",      ("claude-sonnet-or",),     False, True,  200_000, 16_000),
+        CatalogModel(provider.id, provider.api, provider.label, "openai/gpt-4o",                           "GPT-4o (OR)",                 ("gpt-4o-or",),            False, True,  128_000, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "openai/o3",                               "o3 (OR)",                     ("o3-or",),                True,  True,  200_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "google/gemini-2.5-pro",                   "Gemini 2.5 Pro (OR)",         ("gemini-pro-or",),        True,  True,  1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "google/gemini-2.5-flash",                 "Gemini 2.5 Flash (OR)",       ("gemini-flash-or",),      False, True,  1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "deepseek/deepseek-chat",                  "DeepSeek V3 (OR)",            ("deepseek", "deepseek-v3"), False, False, 163_840, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "deepseek/deepseek-r1",                    "DeepSeek R1 (OR)",            ("deepseek-r1",),          True,  False, 163_840, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "x-ai/grok-3",                             "Grok 3 (OR)",                 ("grok-or",),              True,  False, 131_072, 131_072),
+        CatalogModel(provider.id, provider.api, provider.label, "qwen/qwen3-235b-a22b",                    "Qwen 3 235B (OR)",            ("qwen3-or",),             True,  False, 131_072, 40_000),
+        CatalogModel(provider.id, provider.api, provider.label, "qwen/qwen-2.5-72b-instruct",              "Qwen 2.5 72B (OR)",           ("qwen", "qwen-2.5"),      False, False, 131_072,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "meta-llama/llama-4-maverick",             "Llama 4 Maverick (OR)",       ("llama-4-maverick-or",),  False, True,  524_288,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "meta-llama/llama-4-scout",                "Llama 4 Scout (OR)",          ("llama-4-scout-or",),     False, True,  131_072,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "mistralai/mistral-large-2411",            "Mistral Large (OR)",          ("mistral-large-or",),     False, False, 131_072,  4_096),
+        CatalogModel(provider.id, provider.api, provider.label, "mistralai/mistral-7b-instruct:free",      "Mistral 7B (free)",           ("free", "free-mistral"),  False, False,  32_768,  4_096),
+        CatalogModel(provider.id, provider.api, provider.label, "meta-llama/llama-3.1-8b-instruct:free",   "Llama 3.1 8B (free)",         ("free-llama",),           False, False, 131_072,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "google/gemma-3-27b-it:free",              "Gemma 3 27B (free)",          ("free-gemma",),           False, True,  131_072,  8_192),
     )
     return provider, models
 
@@ -384,9 +520,14 @@ def _gemini_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None
         return None
     provider = ProviderConfig("gemini", "gemini", "gemini", ("GEMINI_API_KEY",))
     models = (
-        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-pro", "Gemini 2.5 Pro", ("gemini-pro", "gemini"), True, True, 1_048_576, 65_536),
-        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.0-flash", "Gemini 2.0 Flash", ("gemini-flash",), False, True, 1_048_576, 8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.0-flash-lite", "Gemini 2.0 Flash Lite", ("gemini-flash-lite",), False, True, 1_048_576, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-pro",       "Gemini 2.5 Pro",        ("gemini-pro", "gemini"),  True,  True, 1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-flash",     "Gemini 2.5 Flash",      ("gemini-2.5-flash",),     True,  True, 1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-flash-lite","Gemini 2.5 Flash Lite", ("gemini-2.5-flash-lite",),False,  True, 1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.0-flash",     "Gemini 2.0 Flash",      ("gemini-flash",),         False, True, 1_048_576,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.0-flash-lite","Gemini 2.0 Flash Lite", ("gemini-flash-lite",),    False, True, 1_048_576,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-1.5-pro",       "Gemini 1.5 Pro",        ("gemini-1.5-pro",),       False, True, 2_000_000,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-1.5-flash",     "Gemini 1.5 Flash",      ("gemini-1.5-flash",),     False, True, 1_000_000,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-1.5-flash-8b",  "Gemini 1.5 Flash 8B",   ("gemini-1.5-flash-8b",),  False, True, 1_000_000,  8_192),
     )
     return provider, models
 
@@ -458,7 +599,15 @@ def _provider_specs() -> list[tuple[ProviderConfig, tuple[CatalogModel, ...]]]:
     providers = []
     for builder in (
         _anthropic_provider,
+        _openai_provider,
         _gemini_provider,
+        _mistral_provider,
+        _deepseek_provider,
+        _xai_provider,
+        _together_provider,
+        _perplexity_provider,
+        _fireworks_provider,
+        _cohere_provider,
         _copilot_provider,
         _groq_provider,
         _cerebras_provider,
