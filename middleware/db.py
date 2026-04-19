@@ -52,6 +52,18 @@ class GatewayApiToken(Base):
     user = relationship("User", back_populates="gateway_tokens")
 
 
+class ModelControl(Base):
+    """Admin policy overrides for model availability/routing metadata."""
+
+    __tablename__ = "model_controls"
+
+    model_id = Column(String, primary_key=True)
+    enabled = Column(Boolean, default=True, nullable=False)
+    classification = Column(String, default="", nullable=False)
+    effort = Column(String, default="medium", nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Session(Base):
     __tablename__ = "sessions"
 
@@ -85,3 +97,9 @@ async def init_db() -> None:
         user_col_names = {str(row[1]) for row in user_cols}
         if "is_admin" not in user_col_names:
             await conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"))
+        model_control_cols = (await conn.execute(text("PRAGMA table_info(model_controls)"))).fetchall()
+        model_control_col_names = {str(row[1]) for row in model_control_cols}
+        if model_control_cols and "effort" not in model_control_col_names:
+            await conn.execute(
+                text("ALTER TABLE model_controls ADD COLUMN effort VARCHAR NOT NULL DEFAULT 'medium'")
+            )

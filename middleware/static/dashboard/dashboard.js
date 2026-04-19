@@ -11,6 +11,9 @@ const state = {
   conversations: null,
   selectedConv: null,
   piStatus: null,
+  tokenMeta: null,
+  lastToken: "",
+  modelControls: null,
   terminal: {
     term: null,
     socket: null,
@@ -97,6 +100,71 @@ async function refreshPiTokens() {
   }
   state.piStatus = data;
   renderPiStatus();
+}
+
+async function fetchTokenMeta() {
+  if (!state.user) {
+    state.tokenMeta = null;
+    return;
+  }
+  const r = await api("/auth/tokens");
+  if (!r.ok) {
+    state.tokenMeta = {
+      has_token: false,
+      token_count: 0,
+      error: `GET /auth/tokens ${r.status}`,
+    };
+    return;
+  }
+  state.tokenMeta = await r.json();
+}
+
+async function regenerateToken() {
+  const r = await api("/auth/tokens/regenerate", { method: "POST" });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(data.detail || "Failed to regenerate token");
+  }
+  state.lastToken = data.token || "";
+  await fetchTokenMeta();
+}
+
+async function copyLastToken() {
+  if (!state.lastToken) {
+    throw new Error("No token available yet. Click Regenerate first.");
+  }
+  await navigator.clipboard.writeText(state.lastToken);
+}
+
+async function fetchModelControls() {
+  if (!state.user?.is_admin) {
+    state.modelControls = null;
+    return;
+  }
+  const r = await api("/dashboard/model-controls");
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(data.detail || `GET /dashboard/model-controls ${r.status}`);
+  }
+  state.modelControls = data.models || [];
+}
+
+async function saveModelControls() {
+  const rows = Array.from(document.querySelectorAll("[data-policy-row]"));
+  const models = rows.map((row) => ({
+    id: row.dataset.modelId,
+    enabled: !!row.querySelector("[data-field='enabled']")?.checked,
+    classification: row.querySelector("[data-field='classification']")?.value || "",
+    effort: row.querySelector("[data-field='effort']")?.value || "medium",
+  }));
+  const r = await api("/dashboard/model-controls", {
+    method: "POST",
+    body: JSON.stringify({ models }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(data.detail || "Failed to save model policy");
+  }
 }
 
 function showAuthGate() {
@@ -232,6 +300,92 @@ function renderPiStatus() {
       </div>`;
     })
     .join("");
+}
+
+function renderTokenMeta() {
+  const status = $("#token-status");
+  const value = $("#token-value");
+  if (!status || !value) return;
+
+  if (!state.user) {
+    status.innerHTML = '<div class="empty">Sign in required.</div>';
+    value.classList.add("hidden");
+    return;
+  }
+
+  const meta = state.tokenMeta;
+  if (!meta) {
+    status.innerHTML = '<div class="empty">Token metadata unavailable.</div>';
+  } else if (meta.error) {
+    status.innerHTML = `<div class="empty">${escapeHtml(String(meta.error))}</div>`;
+  } else {
+    status.innerHTML = `<div class="token-box"><div>Tokens provisioned</div><div class="mono">${escapeHtml(
+      String(meta.token_count || 0)
+    )}</div></div>`;
+  }
+
+  if (state.lastToken) {
+    value.textContent = state.lastToken;
+    value.classList.remove("hidden");
+  } else {
+    value.classList.add("hidden");
+  }
+}
+
+function renderModelPolicy() {
+  const host = $("#model-policy-table");
+  if (!host) return;
+
+  if (!state.user?.is_admin) {
+    host.innerHTML = '<div class="empty">Admin access required.</div>';
+    return;
+  }
+  if (!state.modelControls?.length) {
+    host.innerHTML = '<div class="empty">No model controls loaded.</div>';
+    return;
+  }
+
+  const classOptions = [
+    "",
+    "heavy_reasoning",
+    "code_generation",
+    "nuanced_coding",
+    "multimodal",
+    "fast_simple",
+  ];
+  const effortOptions = ["low", "medium", "high"];
+
+  const rows = state.modelControls
+    .map((m) => {
+      const classSelect = classOptions
+        .map(
+          (opt) =>
+            `<option value="${opt}" ${m.classification === opt ? "selected" : ""}>${
+              opt || "(auto)"
+            }</option>`
+        )
+        .join("");
+      const effortSelect = effortOptions
+        .map(
+          (opt) => `<option value="${opt}" ${m.effort === opt ? "selected" : ""}>${opt}</option>`
+        )
+        .join("");
+      return `<tr data-policy-row data-model-id="${escapeHtml(m.id)}">
+        <td class="mono">${escapeHtml(m.id)}</td>
+        <td>${escapeHtml(m.provider || "")}</td>
+        <td><input data-field="enabled" type="checkbox" ${m.enabled ? "checked" : ""}></td>
+        <td><select data-field="classification">${classSelect}</select></td>
+        <td><select data-field="effort">${effortSelect}</select></td>
+      </tr>`;
+    })
+    .join("");
+
+  host.innerHTML = `<table class="policy-table">
+    <thead>
+      <tr><th>Model</th><th>Provider</th><th>Enabled</th><th>Classification</th><th>Effort</th></tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>`;
 }
 
 function selectConversation(id) {
@@ -391,6 +545,7 @@ async function setTab(name) {
       connect: "Connect",
       auth: "Auth",
       terminal: "Terminal",
+      "model-policy": "Model Policy",
     }[name] || "";
 
   if (name === "models") renderModels();
@@ -406,6 +561,10 @@ async function setTab(name) {
   if (name === "terminal") {
     ensureTerminal();
   }
+  if (name === "model-policy") {
+    await fetchModelControls();
+    renderModelPolicy();
+  }
 }
 
 function renderConnect() {
@@ -414,6 +573,15 @@ function renderConnect() {
   $("#connect-curl").textContent = `curl -sS ${origin}/health
 curl -sS ${origin}/v1/models \\
   -H "Authorization: Bearer air_YOUR_TOKEN"`;
+  const ant = $("#anthropic-connect");
+  if (ant) {
+    ant.textContent = `ANTHROPIC_BASE_URL=${origin}/anthropic
+ANTHROPIC_API_KEY=air_YOUR_TOKEN
+
+curl -sS ${origin}/anthropic/v1/models \\
+  -H "x-api-key: air_YOUR_TOKEN"`;
+  }
+  renderTokenMeta();
 }
 
 async function onLogin(e) {
@@ -469,6 +637,9 @@ async function onLogout() {
   state.conversations = null;
   state.selectedConv = null;
   state.piStatus = null;
+  state.tokenMeta = null;
+  state.lastToken = "";
+  state.modelControls = null;
   await refreshAll();
 }
 
@@ -478,6 +649,7 @@ async function refreshAll() {
   await fetchMe();
   if (state.user) {
     await fetchConversations();
+    await fetchTokenMeta();
   }
   if (state.user?.is_whitelisted && state.tab === "memory" && state.selectedConv) {
     const id = state.selectedConv.id;
@@ -485,6 +657,9 @@ async function refreshAll() {
   }
   if (state.user?.is_admin && state.tab === "auth") {
     await fetchPiStatus();
+  }
+  if (state.user?.is_admin && state.tab === "model-policy") {
+    await fetchModelControls();
   }
 
   if (!state.user) {
@@ -500,7 +675,9 @@ async function refreshAll() {
   renderModels();
   renderConversations();
   renderConnect();
+  renderTokenMeta();
   renderPiStatus();
+  renderModelPolicy();
   updateAdminNav();
 }
 
@@ -520,6 +697,33 @@ function wire() {
   $("#btn-term-clear").addEventListener("click", () => {
     const term = ensureTerminal();
     if (term) term.clear();
+  });
+  $("#btn-token-regenerate")?.addEventListener("click", async () => {
+    try {
+      await regenerateToken();
+      renderTokenMeta();
+      showTerminalStatus("Token regenerated", "ok");
+    } catch (err) {
+      showTerminalStatus(String(err.message || err), "error");
+    }
+  });
+  $("#btn-token-copy")?.addEventListener("click", async () => {
+    try {
+      await copyLastToken();
+      showTerminalStatus("Token copied to clipboard", "ok");
+    } catch (err) {
+      showTerminalStatus(String(err.message || err), "error");
+    }
+  });
+  $("#btn-policy-save")?.addEventListener("click", async () => {
+    try {
+      await saveModelControls();
+      await fetchModelControls();
+      renderModelPolicy();
+      showTerminalStatus("Model policy saved", "ok");
+    } catch (err) {
+      showTerminalStatus(String(err.message || err), "error");
+    }
   });
 
   document.querySelectorAll(".nav button[data-tab]").forEach((btn) => {

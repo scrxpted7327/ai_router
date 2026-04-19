@@ -24,7 +24,7 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 
 from . import registry as reg
-from .db import GatewayApiToken, SessionLocal, User
+from .db import GatewayApiToken, ModelControl, SessionLocal, User
 from .providers import gemini as gemini_provider
 from .providers import openai_compat
 
@@ -50,6 +50,21 @@ async def _auth(request: Request) -> User:
         if not user or not user.is_whitelisted:
             raise HTTPException(status_code=403, detail="Account not whitelisted")
     return user
+
+
+async def _enabled_model_ids() -> set[str]:
+    model_ids = [m["id"] for m in reg.list_models()]
+    async with SessionLocal() as db:
+        rows = (
+            await db.execute(select(ModelControl).where(ModelControl.model_id.in_(model_ids)))
+        ).scalars().all()
+    by_id = {row.model_id: row for row in rows}
+    enabled: set[str] = set()
+    for model_id in model_ids:
+        row = by_id.get(model_id)
+        if row is None or bool(row.enabled):
+            enabled.add(model_id)
+    return enabled
 
 
 # ── Anthropic request → internal OpenAI-compat body ──────────────────────────
@@ -191,6 +206,10 @@ async def messages(request: Request):
     msg_id = f"msg_{uuid.uuid4().hex[:24]}"
     is_stream = body.get("stream", False)
 
+    enabled = await _enabled_model_ids()
+    if requested_model and requested_model not in enabled:
+        raise HTTPException(status_code=403, detail=f"Model '{requested_model}' is disabled by admin policy")
+
     entry = reg.get(requested_model)
     if not entry:
         raise HTTPException(status_code=404, detail=f"Model '{requested_model}' not found in gateway registry")
@@ -223,6 +242,7 @@ async def messages(request: Request):
 @router.get("/v1/models")
 async def models(request: Request):
     await _auth(request)
+    enabled = await _enabled_model_ids()
     return {
         "object": "list",
         "data": [
@@ -237,5 +257,6 @@ async def models(request: Request):
                 "max_tokens": m["max_tokens"],
             }
             for m in reg.list_models()
+            if m["id"] in enabled
         ],
     }

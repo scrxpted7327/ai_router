@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -98,6 +99,15 @@ class UserOut(BaseModel):
     email: str
     is_whitelisted: bool
     is_admin: bool
+
+
+class TokenMetaOut(BaseModel):
+    has_token: bool
+    token_count: int
+
+
+class TokenOut(BaseModel):
+    token: str
 
 
 # ── Cookie helpers ────────────────────────────────────────────────────────────
@@ -243,6 +253,29 @@ async def me(user: User = Depends(resolve_session)):
         is_whitelisted=user.is_whitelisted,
         is_admin=user.is_admin,
     )
+
+
+@router.get("/tokens", response_model=TokenMetaOut)
+async def token_meta(user: User = Depends(resolve_session), db: AsyncSession = Depends(get_db)):
+    rows = (
+        await db.execute(select(GatewayApiToken).where(GatewayApiToken.user_id == user.id))
+    ).scalars().all()
+    return TokenMetaOut(has_token=bool(rows), token_count=len(rows))
+
+
+@router.post("/tokens/regenerate", response_model=TokenOut)
+async def regenerate_token(user: User = Depends(resolve_session), db: AsyncSession = Depends(get_db)):
+    rows = (
+        await db.execute(select(GatewayApiToken).where(GatewayApiToken.user_id == user.id))
+    ).scalars().all()
+    for row in rows:
+        await db.delete(row)
+
+    raw_token = f"air_{secrets.token_urlsafe(32)}"
+    digest = _bearer_digest(raw_token)
+    db.add(GatewayApiToken(user_id=user.id, label="dashboard", token_digest=digest))
+    await db.commit()
+    return TokenOut(token=raw_token)
 
 
 # ── Conversation history routes ───────────────────────────────────────────────

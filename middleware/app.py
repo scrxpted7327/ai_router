@@ -37,7 +37,7 @@ from . import registry as reg
 from .anthropic_proxy import router as anthropic_router
 from .auth import COOKIE_NAME, require_admin, require_whitelisted, router as auth_router
 from .compactor import compact, needs_compaction
-from .db import Session, SessionLocal, User, init_db
+from .db import ModelControl, Session, SessionLocal, User, init_db
 from .format_adapter import normalise_request, stream_as_responses_api
 from .router import route
 from .providers import gemini as gemini_provider
@@ -48,6 +48,15 @@ STATIC_DASHBOARD = Path(__file__).parent / "static" / "dashboard"
 STATIC_TERMINAL = Path(__file__).parent / "static" / "terminal"
 PI_AUTH_SCRIPT = Path(__file__).parent.parent / "pi_auth.py"
 PI_ALLOWED_COMMANDS = {"login", "/login"}
+ALLOWED_CLASSIFICATIONS = {
+    "",
+    "heavy_reasoning",
+    "code_generation",
+    "nuanced_coding",
+    "multimodal",
+    "fast_simple",
+}
+ALLOWED_EFFORTS = {"low", "medium", "high"}
 
 log = logging.getLogger("ai_router")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -130,6 +139,92 @@ def _token_status_payload(providers: dict[str, dict], auth_path: Path) -> dict:
     return {"auth_file": str(auth_path), "env_file": str(_env_target_path()), "providers": rows}
 
 
+def _model_classification_guess(model_id: str) -> str:
+    text = model_id.lower()
+    if any(k in text for k in ("vision", "image", "gemini")):
+        return "multimodal"
+    if any(k in text for k in ("codex", "code", "dev")):
+        return "code_generation"
+    if any(k in text for k in ("reason", "r1", "o1", "think", "opus")):
+        return "heavy_reasoning"
+    if any(k in text for k in ("flash", "instant", "fast", "haiku", "mini")):
+        return "fast_simple"
+    return "nuanced_coding"
+
+
+def _model_effort_guess(model_id: str) -> str:
+    text = model_id.lower()
+    if any(k in text for k in ("flash", "instant", "fast", "mini", "haiku", "8b")):
+        return "low"
+    if any(k in text for k in ("opus", "r1", "reason", "70b", "heavy")):
+        return "high"
+    return "medium"
+
+
+async def _model_control_index() -> tuple[set[str], dict[str, dict[str, str]]]:
+    models = reg.list_models()
+    model_ids = [m["id"] for m in models]
+    async with SessionLocal() as db:
+        rows = (
+            await db.execute(select(ModelControl).where(ModelControl.model_id.in_(model_ids)))
+        ).scalars().all()
+    by_id = {row.model_id: row for row in rows}
+    enabled: set[str] = set()
+    meta: dict[str, dict[str, str]] = {}
+    for model_id in model_ids:
+        row = by_id.get(model_id)
+        row_enabled = bool(row.enabled) if row else True
+        if row_enabled:
+            enabled.add(model_id)
+        meta[model_id] = {
+            "classification": (row.classification if row else _model_classification_guess(model_id)) or "",
+            "effort": (row.effort if row else _model_effort_guess(model_id)) or "medium",
+        }
+    return enabled, meta
+
+
+def _target_effort_for_task(task_type: str) -> str:
+    if task_type == "heavy_reasoning":
+        return "high"
+    if task_type == "fast_simple":
+        return "low"
+    return "medium"
+
+
+def _effort_distance(candidate: str, target: str) -> int:
+    order = {"low": 0, "medium": 1, "high": 2}
+    return abs(order.get(candidate, 1) - order.get(target, 1))
+
+
+def _policy_pick_for_task(
+    *,
+    task_type: str,
+    enabled: set[str],
+    meta: dict[str, dict[str, str]],
+    preferred: list[str],
+) -> reg.ModelEntry | None:
+    target_effort = _target_effort_for_task(task_type)
+
+    def _is_match(model_id: str) -> bool:
+        model_meta = meta.get(model_id, {})
+        return model_meta.get("classification", "") == task_type
+
+    candidates = [model_id for model_id in enabled if _is_match(model_id)]
+    if not candidates:
+        return None
+
+    preferred_pos = {model_id: idx for idx, model_id in enumerate(preferred)}
+
+    candidates.sort(
+        key=lambda model_id: (
+            _effort_distance(meta.get(model_id, {}).get("effort", "medium"), target_effort),
+            preferred_pos.get(model_id, 10_000),
+            model_id,
+        )
+    )
+    return reg.get(candidates[0])
+
+
 def _normalize_terminal_subcommand(raw: str | None) -> str:
     cmd = (raw or "/login").strip().lower()
     if cmd in PI_ALLOWED_COMMANDS:
@@ -195,6 +290,83 @@ async def pi_auth_refresh(_admin=Depends(require_admin)) -> dict:
     providers = pi_auth.load_and_refresh(auth_path, force=False)
     pi_auth.write_to_env(providers, _env_target_path())
     return _token_status_payload(providers, auth_path)
+
+
+@app.get("/dashboard/model-controls")
+async def get_model_controls(_admin=Depends(require_admin)) -> dict:
+    models = reg.list_models()
+    model_ids = [m["id"] for m in models]
+    async with SessionLocal() as db:
+        rows = (
+            await db.execute(select(ModelControl).where(ModelControl.model_id.in_(model_ids)))
+        ).scalars().all()
+        existing = {row.model_id: row for row in rows}
+
+        changed = False
+        for model_id in model_ids:
+            if model_id in existing:
+                continue
+            row = ModelControl(
+                model_id=model_id,
+                enabled=True,
+                classification=_model_classification_guess(model_id),
+                effort=_model_effort_guess(model_id),
+            )
+            db.add(row)
+            existing[model_id] = row
+            changed = True
+        if changed:
+            await db.commit()
+
+    controls = []
+    for model in models:
+        row = existing[model["id"]]
+        controls.append(
+            {
+                "id": model["id"],
+                "name": model.get("name") or model["id"],
+                "provider": model.get("owned_by") or "",
+                "enabled": bool(row.enabled),
+                "classification": row.classification or "",
+                "effort": row.effort or "medium",
+            }
+        )
+    return {"models": controls}
+
+
+@app.post("/dashboard/model-controls")
+async def set_model_controls(payload: dict, _admin=Depends(require_admin)) -> dict:
+    models = payload.get("models")
+    if not isinstance(models, list):
+        raise HTTPException(status_code=400, detail="models must be a list")
+
+    async with SessionLocal() as db:
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            model_id = str(item.get("id") or "").strip()
+            if not model_id:
+                continue
+
+            enabled = bool(item.get("enabled", True))
+            classification = str(item.get("classification") or "").strip().lower()
+            effort = str(item.get("effort") or "medium").strip().lower()
+
+            if classification not in ALLOWED_CLASSIFICATIONS:
+                raise HTTPException(status_code=400, detail=f"Invalid classification for {model_id}")
+            if effort not in ALLOWED_EFFORTS:
+                raise HTTPException(status_code=400, detail=f"Invalid effort for {model_id}")
+
+            row = await db.get(ModelControl, model_id)
+            if not row:
+                row = ModelControl(model_id=model_id)
+                db.add(row)
+            row.enabled = enabled
+            row.classification = classification
+            row.effort = effort
+
+        await db.commit()
+    return {"ok": True}
 
 
 @app.websocket("/terminal")
@@ -278,7 +450,15 @@ async def terminal(websocket: WebSocket) -> None:
 
 @app.get("/v1/models")
 async def list_models(user=Depends(require_whitelisted)) -> dict:
-    return {"object": "list", "data": reg.list_models()}
+    enabled, meta = await _model_control_index()
+    items = []
+    for model in reg.list_models():
+        if model["id"] not in enabled:
+            continue
+        entry = dict(model)
+        entry.update(meta.get(model["id"], {}))
+        items.append(entry)
+    return {"object": "list", "data": items}
 
 
 # ── Cursor Responses API endpoint ─────────────────────────────────────────────
@@ -312,16 +492,30 @@ async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
 
     # 2. Resolve model — explicit name or auto-route
     requested = body.get("model", "")
+    enabled, meta = await _model_control_index()
     entry = reg.get(requested)
+    if requested and requested not in enabled:
+        raise HTTPException(status_code=403, detail=f"Model '{requested}' is disabled by admin policy")
     if not entry:
         decision = route(messages)
-        entry = reg.get(decision.primary)
+        task_type = getattr(decision.task_type, "value", str(decision.task_type))
+        primary = decision.primary if decision.primary in enabled else ""
+        entry = reg.get(primary) if primary else None
         if not entry:
             # walk fallbacks
             for fb in decision.fallbacks:
+                if fb not in enabled:
+                    continue
                 entry = reg.get(fb)
                 if entry:
                     break
+        if not entry:
+            entry = _policy_pick_for_task(
+                task_type=task_type,
+                enabled=enabled,
+                meta=meta,
+                preferred=[decision.primary, *decision.fallbacks],
+            )
         if not entry:
             raise HTTPException(status_code=503, detail=f"No provider available for '{requested}'")
         log.info("Auto-routed '%s' → %s (%s)", requested, entry.model_id, entry.provider)

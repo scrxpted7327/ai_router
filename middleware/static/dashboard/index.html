@@ -105,6 +105,9 @@
           <button type="button" data-tab="terminal" class="admin-only hidden">
             <span class="nav-ico">⌨</span> Terminal
           </button>
+          <button type="button" data-tab="model-policy" class="admin-only hidden">
+            <span class="nav-ico">⚙</span> Model Policy
+          </button>
         </nav>
         <div class="sidebar-footer">
           OpenAI-compatible surface at <code>/v1</code>. Bearer tokens for
@@ -215,6 +218,31 @@
               Example:
             </p>
             <div id="connect-curl" class="help-pre"></div>
+
+            <div class="panel-subsection">
+              <div class="panel-top">
+                <h2>Bearer token</h2>
+                <div class="btn-row">
+                  <button type="button" class="btn btn-primary" id="btn-token-regenerate">Regenerate</button>
+                  <button type="button" class="btn" id="btn-token-copy">Copy token</button>
+                </div>
+              </div>
+              <p class="panel-note">
+                One gateway bearer token works for both <code>/v1/*</code> and
+                <code>/anthropic/v1/*</code> endpoints.
+              </p>
+              <div id="token-status" class="auth-status"></div>
+              <div id="token-value" class="help-pre hidden"></div>
+            </div>
+
+            <div class="panel-subsection">
+              <h2>Anthropic compatibility layer</h2>
+              <p class="panel-note">
+                Use Claude/Anthropic clients against this gateway by targeting
+                <code>/anthropic</code>.
+              </p>
+              <div id="anthropic-connect" class="help-pre"></div>
+            </div>
           </div>
         </section>
 
@@ -248,6 +276,19 @@
             </p>
             <div id="terminal-status" class="msg hidden"></div>
             <div id="terminal-shell" class="terminal-shell"></div>
+          </div>
+        </section>
+
+        <section data-panel="model-policy" class="hidden">
+          <div class="panel">
+            <div class="panel-top">
+              <h2>Model policy</h2>
+              <button type="button" class="btn btn-primary" id="btn-policy-save">Save policy</button>
+            </div>
+            <p class="panel-note">
+              Enable/disable models and assign classification + effort metadata for routing policy.
+            </p>
+            <div id="model-policy-table" class="table-wrap"></div>
           </div>
         </section>
       </main>
