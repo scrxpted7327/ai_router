@@ -742,27 +742,23 @@ function connectTerminal() {
     term.writeln("\r\n[WebSocket error - check browser console]\r\n");
   });
 
-  if (!state.terminal.onDataBound) {
-    term.onData((data) => {
-      const current = state.terminal.socket;
-      if (!current || current.readyState !== WebSocket.OPEN) return;
-      current.send(JSON.stringify({ type: "input", data }));
-    });
-    state.terminal.onDataBound = true;
-  }
-
-  if (!state.terminal.resizeBound) {
-    window.addEventListener("resize", () => {
-      if (state.terminal.fitTimer) clearTimeout(state.terminal.fitTimer);
-      state.terminal.fitTimer = setTimeout(() => {
-        const current = state.terminal.socket;
-        if (current && current.readyState === WebSocket.OPEN) {
-          current.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-        }
-      }, 120);
-    });
-    state.terminal.resizeBound = true;
-  }
+  // Bind input handler (always rebind to capture new socket)
+  term.onData((data) => {
+    console.log("[Terminal] onData received:", JSON.stringify(data), "length:", data.length);
+    const current = state.terminal.socket;
+    if (!current) {
+      console.log("[Terminal] No socket available");
+      return;
+    }
+    if (current.readyState !== WebSocket.OPEN) {
+      console.log("[Terminal] Socket not open, state:", current.readyState);
+      return;
+    }
+    const message = JSON.stringify({ type: "input", data });
+    console.log("[Terminal] Sending input:", message);
+    current.send(message);
+  });
+  console.log("[Terminal] onData handler bound to new socket");
 }
 
 async function setTab(name) {
