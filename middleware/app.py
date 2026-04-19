@@ -589,13 +589,18 @@ async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
     else:
         log.info("Model '%s' → %s (%s)", requested, entry.model_id, entry.provider)
 
-    # 3. Apply user's personal API key if one is stored
+    # 3. Apply user's personal API key if one is stored; non-admins must have one
     if user and entry.provider_id:
         user_key = await get_user_token(user.id, entry.provider_id)
         if user_key:
             from dataclasses import replace as dc_replace
             entry = dc_replace(entry, api_key=user_key)
             log.info("Using personal token for provider '%s'", entry.provider_id)
+        elif not user.is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail=f"No personal API key for provider '{entry.provider_id}'. Add one in Dashboard → API Keys.",
+            )
 
     if entry.provider != "bedrock" and (not entry.api_key or "REPLACE_ME" in entry.api_key):
         raise HTTPException(status_code=401,

@@ -285,6 +285,7 @@ _VALID_PROVIDERS = {
     "anthropic", "openai", "gemini", "mistral", "deepseek", "xai",
     "groq", "cerebras", "openrouter", "together", "perplexity",
     "fireworks", "cohere", "zai", "kilo", "opencode", "opencode-zen",
+    "github-copilot",
 }
 
 

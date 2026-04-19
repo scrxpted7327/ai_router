@@ -225,12 +225,17 @@ async def messages(request: Request):
     if not entry:
         raise HTTPException(status_code=404, detail=f"Model '{requested_model}' not found in gateway registry")
 
-    # Apply user's personal provider key if stored
+    # Apply user's personal provider key; non-admins must have one
     if entry.provider_id:
         user_key = await get_user_token(user.id, entry.provider_id)
         if user_key:
             from dataclasses import replace as dc_replace
             entry = dc_replace(entry, api_key=user_key)
+        elif not user.is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail=f"No personal API key for provider '{entry.provider_id}'. Add one in Dashboard → API Keys.",
+            )
 
     if entry.provider != "bedrock" and (not entry.api_key or "REPLACE_ME" in entry.api_key):
         raise HTTPException(status_code=503, detail=f"No API key configured for '{requested_model}'")
