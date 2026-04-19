@@ -429,6 +429,22 @@ def _cerebras_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | No
     return provider, models
 
 
+def _auto_routing_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    provider = ProviderConfig(
+        "auto-routing",
+        "openai",
+        "scrxpted",
+        (),
+        base_url="INTERNAL",
+    )
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "scrxpted/auto-free",    "Auto Free Router",     ("auto-free",),    False, True,  200_000, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "scrxpted/auto-premium", "Auto Premium Router",  ("auto-premium",), True,  True,  1_000_000, 32_768),
+        CatalogModel(provider.id, provider.api, provider.label, "scrxpted/auto-max",     "Auto Max Router",      ("auto-max",),     True,  True,  1_000_000, 100_000),
+    )
+    return provider, models
+
+
 def _openrouter_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
     if not _env("OPENROUTER_API_KEY"):
         return None
@@ -625,6 +641,7 @@ def _bedrock_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | Non
 def _provider_specs() -> list[tuple[ProviderConfig, tuple[CatalogModel, ...]]]:
     providers = []
     for builder in (
+        _auto_routing_provider,
         _anthropic_provider,
         _openai_provider,
         _gemini_provider,

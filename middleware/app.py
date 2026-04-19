@@ -547,6 +547,51 @@ async def chat_completions(request: Request, user=Depends(require_whitelisted)) 
 
 # ── Core dispatch ─────────────────────────────────────────────────────────────
 
+def _auto_route_model(requested: str, task_type: str, enabled: set[str]) -> str | None:
+    """Route auto-free/premium/max to actual models based on task classification."""
+    AUTO_FREE_ROUTES = {
+        "heavy_reasoning": ["deepseek-r1", "qwq-groq", "free"],
+        "code_generation": ["deepseek-chat", "qwen", "free"],
+        "nuanced_coding": ["deepseek-chat", "qwen", "free"],
+        "multimodal": ["llama-3.2-90b-groq", "free-gemma", "free"],
+        "fast_simple": ["glm-flash", "free-llama", "free"],
+    }
+    AUTO_PREMIUM_ROUTES = {
+        "heavy_reasoning": ["claude-opus", "o3", "deepseek-r1"],
+        "code_generation": ["claude-sonnet", "gpt-4.1", "deepseek-chat"],
+        "nuanced_coding": ["claude-sonnet", "gpt-4.1", "gemini-pro"],
+        "multimodal": ["gemini-pro", "claude-opus", "gpt-4.1"],
+        "fast_simple": ["claude-haiku", "gemini-flash", "cerebras"],
+    }
+    AUTO_MAX_ROUTES = {
+        "heavy_reasoning": ["claude-opus-4-7", "o3", "gpt-5"],
+        "code_generation": ["claude-opus-4-7", "gpt-4.1", "o3"],
+        "nuanced_coding": ["claude-opus-4-7", "claude-sonnet-4-6", "gpt-4.1"],
+        "multimodal": ["gemini-2.5-pro", "claude-opus-4-7", "gpt-4.1"],
+        "fast_simple": ["claude-sonnet-4-6", "gpt-4.1", "gemini-2.5-flash"],
+    }
+
+    routes_map = {
+        "scrxpted/auto-free": AUTO_FREE_ROUTES,
+        "auto-free": AUTO_FREE_ROUTES,
+        "scrxpted/auto-premium": AUTO_PREMIUM_ROUTES,
+        "auto-premium": AUTO_PREMIUM_ROUTES,
+        "scrxpted/auto-max": AUTO_MAX_ROUTES,
+        "auto-max": AUTO_MAX_ROUTES,
+    }
+
+    route_set = routes_map.get(requested)
+    if not route_set:
+        return None
+
+    candidates = route_set.get(task_type, route_set.get("nuanced_coding", []))
+    for candidate in candidates:
+        entry = reg.get(candidate)
+        if entry and entry.model_id in enabled:
+            return entry.model_id
+    return None
+
+
 async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
     messages = body.get("messages", [])
     do_stream = body.get("stream", True)
@@ -561,7 +606,18 @@ async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
     requested = body.get("model", "")
     enabled, meta = await _model_control_index()
     entry = reg.get(requested)
-    if requested and requested not in enabled:
+
+    # Handle auto-routing pseudo-models
+    if requested and entry and entry.base_url == "INTERNAL":
+        decision = route(messages)
+        task_type = getattr(decision.task_type, "value", str(decision.task_type))
+        auto_model_id = _auto_route_model(requested, task_type, enabled)
+        if auto_model_id:
+            entry = reg.get(auto_model_id)
+            log.info("Auto-route '%s' [%s] → %s", requested, task_type, auto_model_id)
+        else:
+            raise HTTPException(status_code=503, detail=f"No models available for auto-routing tier '{requested}'")
+    elif requested and requested not in enabled:
         raise HTTPException(status_code=403, detail=f"Model '{requested}' is disabled by admin policy")
     if not entry:
         decision = route(messages)
