@@ -27,7 +27,7 @@ DYNAMIC_MODELS_TTL = 60 * 60 * 6  # 6 hours
 
 
 def _fetch_provider_models(provider_id: str, base_url: str, api_key: str, extra_headers: dict | None = None) -> list[dict] | None:
-    """Fetch model list from provider API with caching."""
+    """Fetch model list from provider API with caching (OpenAI-compatible endpoints)."""
     now = int(time.time())
 
     # Check cache
@@ -49,6 +49,90 @@ def _fetch_provider_models(provider_id: str, base_url: str, api_key: str, extra_
                 return None
             data = response.json()
             models = data.get("data", [])
+
+            # Cache the results
+            DYNAMIC_MODELS_CACHE[provider_id] = (now, models)
+            return models
+    except Exception:
+        # Return cached data if available, even if expired
+        if provider_id in DYNAMIC_MODELS_CACHE:
+            return DYNAMIC_MODELS_CACHE[provider_id][1]
+        return None
+
+
+def _fetch_anthropic_models(api_key: str) -> list[dict] | None:
+    """Fetch model list from Anthropic native API."""
+    provider_id = "anthropic"
+    now = int(time.time())
+
+    # Check cache
+    if provider_id in DYNAMIC_MODELS_CACHE:
+        cached_time, cached_models = DYNAMIC_MODELS_CACHE[provider_id]
+        if now - cached_time < DYNAMIC_MODELS_TTL:
+            return cached_models
+
+    # Fetch from API
+    try:
+        with httpx.Client(timeout=5.0, follow_redirects=True) as client:
+            response = client.get(
+                "https://api.anthropic.com/v1/models",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                }
+            )
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            models = data.get("data", [])
+
+            # Cache the results
+            DYNAMIC_MODELS_CACHE[provider_id] = (now, models)
+            return models
+    except Exception:
+        # Return cached data if available, even if expired
+        if provider_id in DYNAMIC_MODELS_CACHE:
+            return DYNAMIC_MODELS_CACHE[provider_id][1]
+        return None
+
+
+def _fetch_gemini_models(api_key: str) -> list[dict] | None:
+    """Fetch model list from Gemini native API."""
+    provider_id = "gemini"
+    now = int(time.time())
+
+    # Check cache
+    if provider_id in DYNAMIC_MODELS_CACHE:
+        cached_time, cached_models = DYNAMIC_MODELS_CACHE[provider_id]
+        if now - cached_time < DYNAMIC_MODELS_TTL:
+            return cached_models
+
+    # Fetch from API
+    try:
+        with httpx.Client(timeout=5.0, follow_redirects=True) as client:
+            response = client.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+            )
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            raw_models = data.get("models", [])
+
+            # Convert Gemini format to standard format
+            models = []
+            for m in raw_models:
+                model_name = m.get("name", "")
+                if not model_name.startswith("models/"):
+                    continue
+                model_id = model_name[len("models/"):]
+                if "generateContent" not in m.get("supportedGenerationMethods", []):
+                    continue
+                models.append({
+                    "id": model_id,
+                    "name": m.get("displayName", model_id),
+                    "context_window": m.get("inputTokenLimit", 1_048_576),
+                    "max_tokens": m.get("outputTokenLimit", 8_192),
+                })
 
             # Cache the results
             DYNAMIC_MODELS_CACHE[provider_id] = (now, models)
@@ -788,22 +872,56 @@ def _opencode_zen_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] 
 
 
 def _anthropic_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
-    if not _env("ANTHROPIC_API_KEY"):
+    api_key = _env("ANTHROPIC_API_KEY")
+    if not api_key:
         return None
     provider = ProviderConfig("anthropic", "anthropic", "anthropic", ("ANTHROPIC_API_KEY",))
-    models = (
+
+    # Static fallback models
+    static_models = (
         CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7", "Claude Opus 4.7", ("claude-opus-4-7-direct",), True, True, 200_000, 32_000),
         CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4-6", "Claude Sonnet 4.6", ("claude-sonnet-4-6-direct", "claude-direct"), False, True, 200_000, 16_000),
         CatalogModel(provider.id, provider.api, provider.label, "claude-haiku-4-5-20251001", "Claude Haiku 4.5 (Direct)", ("claude-haiku-direct",), False, True, 200_000, 8_192),
     )
-    return provider, models
+
+    # Fetch dynamic models from Anthropic native API
+    dynamic_models = _fetch_anthropic_models(api_key)
+
+    if dynamic_models:
+        catalog = []
+        static_ids = {m.model_id for m in static_models}
+
+        for m in dynamic_models:
+            model_id = m.get("id", "")
+            if not model_id or model_id in static_ids:
+                continue
+            catalog.append(CatalogModel(
+                provider_id=provider.id,
+                provider_api=provider.api,
+                provider_label=provider.label,
+                model_id=model_id,
+                name=m.get("display_name", model_id),
+                aliases=(),
+                reasoning=False,
+                vision=False,
+                context_window=200_000,
+                max_tokens=m.get("max_output_tokens", 8_192),
+            ))
+
+        catalog.extend(static_models)
+        return provider, tuple(catalog)
+
+    return provider, static_models
 
 
 def _gemini_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
-    if not _env("GEMINI_API_KEY"):
+    api_key = _env("GEMINI_API_KEY")
+    if not api_key:
         return None
     provider = ProviderConfig("gemini", "gemini", "gemini", ("GEMINI_API_KEY",))
-    models = (
+
+    # Static fallback models
+    static_models = (
         CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-pro",       "Gemini 2.5 Pro",        ("gemini-pro", "gemini"),  True,  True, 1_048_576, 65_536),
         CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-flash",     "Gemini 2.5 Flash",      ("gemini-2.5-flash",),     True,  True, 1_048_576, 65_536),
         CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-flash-lite","Gemini 2.5 Flash Lite", ("gemini-2.5-flash-lite",),False,  True, 1_048_576, 65_536),
@@ -813,7 +931,35 @@ def _gemini_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None
         CatalogModel(provider.id, provider.api, provider.label, "gemini-1.5-flash",     "Gemini 1.5 Flash",      ("gemini-1.5-flash",),     False, True, 1_000_000,  8_192),
         CatalogModel(provider.id, provider.api, provider.label, "gemini-1.5-flash-8b",  "Gemini 1.5 Flash 8B",   ("gemini-1.5-flash-8b",),  False, True, 1_000_000,  8_192),
     )
-    return provider, models
+
+    # Fetch dynamic models from Gemini native API
+    dynamic_models = _fetch_gemini_models(api_key)
+
+    if dynamic_models:
+        catalog = []
+        static_ids = {m.model_id for m in static_models}
+
+        for m in dynamic_models:
+            model_id = m.get("id", "")
+            if not model_id or model_id in static_ids:
+                continue
+            catalog.append(CatalogModel(
+                provider_id=provider.id,
+                provider_api=provider.api,
+                provider_label=provider.label,
+                model_id=model_id,
+                name=m.get("name", model_id),
+                aliases=(),
+                reasoning=False,
+                vision=False,
+                context_window=m.get("context_window", 1_048_576),
+                max_tokens=m.get("max_tokens", 8_192),
+            ))
+
+        catalog.extend(static_models)
+        return provider, tuple(catalog)
+
+    return provider, static_models
 
 
 def _bedrock_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:

@@ -700,8 +700,14 @@ function connectTerminal() {
 
   ws.addEventListener("open", () => {
     console.log("[Terminal] WebSocket opened");
+
+    // Send initial terminal dimensions
+    const cols = term.cols || 80;
+    const rows = term.rows || 24;
+    ws.send(JSON.stringify({ type: "resize", cols, rows }));
+    console.log("[Terminal] Sent initial dimensions:", cols, "x", rows);
+
     term.focus();
-    term.writeln("\r\n[connected] WebSocket open, waiting for data...\r\n");
     showTerminalStatus("Connected", "ok");
   });
 
@@ -744,7 +750,7 @@ function connectTerminal() {
     term.writeln("\r\n[WebSocket error - check browser console]\r\n");
   });
 
-  // Bind input handler with local echo (always rebind to capture new socket)
+  // Bind input handler (always rebind to capture new socket)
   term.onData((data) => {
     console.log("[Terminal] onData received:", JSON.stringify(data), "length:", data.length, "charCode:", data.charCodeAt(0));
     const current = state.terminal.socket;
@@ -757,31 +763,23 @@ function connectTerminal() {
       return;
     }
 
-    // Local echo for printable characters
-    const code = data.charCodeAt(0);
-    if (code === 13) {
-      // Enter key - echo newline and send
-      term.write("\r\n");
-    } else if (code === 127 || code === 8) {
-      // Backspace/Delete - move cursor back, erase character
-      term.write("\b \b");
-    } else if (code >= 32 && code < 127) {
-      // Printable character - echo it
-      term.write(data);
-    } else if (code === 3) {
-      // Ctrl+C
-      term.write("^C\r\n");
-    } else if (code === 4) {
-      // Ctrl+D
-      term.write("^D\r\n");
-    }
-    // Arrow keys and other escape sequences pass through without echo
-
+    // No local echo - PTY handles all echoing and cursor positioning
     const message = JSON.stringify({ type: "input", data });
     console.log("[Terminal] Sending input:", message);
     current.send(message);
   });
-  console.log("[Terminal] onData handler bound with local echo");
+
+  // Handle terminal resize events
+  term.onResize(({ cols, rows }) => {
+    console.log("[Terminal] Terminal resized:", cols, "x", rows);
+    const current = state.terminal.socket;
+    if (current && current.readyState === WebSocket.OPEN) {
+      current.send(JSON.stringify({ type: "resize", cols, rows }));
+      console.log("[Terminal] Sent resize to server");
+    }
+  });
+
+  console.log("[Terminal] Input and resize handlers bound (PTY handles echo)");
 }
 
 async function setTab(name) {
