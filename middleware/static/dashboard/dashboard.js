@@ -717,7 +717,9 @@ function connectTerminal() {
     }
     console.log("[Terminal] Parsed message:", msg);
     if (msg.type === "output") {
-      term.write(msg.data || "");
+      const output = msg.data || "";
+      console.log("[Terminal] Writing output to terminal:", JSON.stringify(output), "length:", output.length);
+      term.write(output);
       return;
     }
     if (msg.type === "error") {

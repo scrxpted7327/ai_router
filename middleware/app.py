@@ -448,40 +448,47 @@ async def terminal(websocket: WebSocket) -> None:
     await websocket.accept()
 
     # Send welcome message
-    await websocket.send_json({"type": "output", "stream": "stdout", "data": "Starting pi CLI...\r\n"})
+    await websocket.send_json({"type": "output", "stream": "stdout", "data": "Starting pi CLI with PTY...\r\n"})
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "pi",
-            *args,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await websocket.send_json({"type": "output", "stream": "stdout", "data": "Process started. Type commands and press Enter.\r\n\r\n"})
+        import ptyprocess
+        import os as os_module
+        import struct
+        import fcntl
+        import termios
+
+        # Spawn pi with a real PTY
+        cmd_args = ["pi"] + args if args else ["pi"]
+        pty = ptyprocess.PtyProcess.spawn(cmd_args, dimensions=(24, 80))
+
+        await websocket.send_json({"type": "output", "stream": "stdout", "data": "PTY started. Type commands and press Enter.\r\n\r\n"})
     except Exception as exc:
-        await websocket.send_json({"type": "error", "data": f"Failed to run pi: {exc}"})
+        await websocket.send_json({"type": "error", "data": f"Failed to start PTY: {exc}"})
         await websocket.close(code=1011)
         return
 
-    async def _pump_output(stream: asyncio.StreamReader | None, stream_name: str) -> None:
-        if not stream:
-            return
-        while True:
-            chunk = await stream.read(1024)
-            if not chunk:
+    async def _read_output():
+        """Read from PTY and send to WebSocket"""
+        while pty.isalive():
+            try:
+                # Non-blocking read with timeout
+                data = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: pty.read(1024) if pty.isalive() else None
+                )
+                if data:
+                    await websocket.send_json({"type": "output", "stream": "stdout", "data": data.decode(errors="replace")})
+                else:
+                    await asyncio.sleep(0.05)
+            except EOFError:
                 break
-            await websocket.send_json(
-                {"type": "output", "stream": stream_name, "data": chunk.decode(errors="replace")}
-            )
+            except Exception as e:
+                log.warning(f"PTY read error: {e}")
+                break
 
-    stdout_task = asyncio.create_task(_pump_output(proc.stdout, "stdout"))
-    stderr_task = asyncio.create_task(_pump_output(proc.stderr, "stderr"))
+    read_task = asyncio.create_task(_read_output())
 
     try:
-        while True:
-            if proc.returncode is not None:
-                break
+        while pty.isalive():
             try:
                 message = await asyncio.wait_for(websocket.receive_json(), timeout=0.2)
             except TimeoutError:
@@ -490,26 +497,38 @@ async def terminal(websocket: WebSocket) -> None:
                 break
 
             msg_type = str(message.get("type") or "")
-            if msg_type == "input" and proc.stdin:
+            if msg_type == "input":
                 data = str(message.get("data") or "")
                 try:
-                    proc.stdin.write(data.encode())
-                    await proc.stdin.drain()
-                except (BrokenPipeError, ConnectionResetError):
+                    pty.write(data.encode())
+                except (BrokenPipeError, OSError):
                     break
             elif msg_type == "resize":
-                continue
+                cols = message.get("cols", 80)
+                rows = message.get("rows", 24)
+                try:
+                    pty.setwinsize(rows, cols)
+                except Exception:
+                    pass
     finally:
-        if proc.returncode is None:
-            proc.terminate()
-        await proc.wait()
-        stdout_task.cancel()
-        stderr_task.cancel()
-        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+        read_task.cancel()
         try:
-            await websocket.send_json({"type": "exit", "code": int(proc.returncode or 0)})
+            await asyncio.gather(read_task, return_exceptions=True)
         except Exception:
             pass
+
+        if pty.isalive():
+            pty.terminate()
+            try:
+                pty.wait()
+            except Exception:
+                pass
+
+        try:
+            await websocket.send_json({"type": "exit", "code": pty.exitstatus or 0})
+        except Exception:
+            pass
+
         if websocket.client_state == WebSocketState.CONNECTED:
             await websocket.close()
 
