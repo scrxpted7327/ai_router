@@ -1,0 +1,164 @@
+model_list:
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # PI-MONO OAUTH PROVIDERS
+  # Tokens written by:  python pi_auth.py --login
+  # Refresh tokens:     python pi_auth.py --login
+  # ════════════════════════════════════════════════════════════════════════════
+
+  # ── Claude (Anthropic OAuth via pi-mono) ──────────────────────────────────
+  - model_name: claude-nuanced
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+      rpm: 50
+      tpm: 100000
+
+  - model_name: claude-opus
+    litellm_params:
+      model: anthropic/claude-opus-4-7
+      api_key: os.environ/ANTHROPIC_API_KEY
+      rpm: 20
+      tpm: 50000
+
+  # ── GitHub Copilot (OAuth via pi-mono) ────────────────────────────────────
+  - model_name: gpt-codex
+    litellm_params:
+      model: openai/gpt-4o                 # Copilot exposes GPT-4o / GPT-5 codex
+      api_key: os.environ/GITHUB_COPILOT_TOKEN
+      api_base: https://api.githubcopilot.com
+      extra_headers:
+        Editor-Version: vscode/1.90.0
+        Copilot-Integration-Id: vscode-chat
+      rpm: 30
+      tpm: 150000
+
+  # ── Gemini (Google OAuth via pi-mono) ─────────────────────────────────────
+  - model_name: gemini-pro
+    litellm_params:
+      model: gemini/gemini-2.5-pro
+      api_key: os.environ/GEMINI_API_KEY
+      rpm: 60
+      tpm: 300000
+
+  - model_name: gemini-flash
+    litellm_params:
+      model: gemini/gemini-2.0-flash
+      api_key: os.environ/GEMINI_API_KEY
+      rpm: 120
+      tpm: 500000
+
+  # ── OpenAI Codex (OAuth via pi-mono) ──────────────────────────────────────
+  - model_name: gpt-5-heavy
+    litellm_params:
+      model: openai/gpt-4o                 # update when GPT-5.4 model ID is confirmed
+      api_key: os.environ/OPENAI_CODEX_API_KEY
+      api_base: os.environ/OPENAI_CODEX_BASE_URL
+      rpm: 20
+      tpm: 200000
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # API KEY PROVIDERS  (already populated in .env)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  # ── Groq — primary compaction engine ──────────────────────────────────────
+  - model_name: groq-compactor
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+      rpm: 100
+      tpm: 200000
+
+  # ── Cerebras — fast inference + backup compactor ──────────────────────────
+  - model_name: cerebras-fast
+    litellm_params:
+      model: cerebras/llama-3.3-70b
+      api_key: os.environ/CEREBRAS_API_KEY
+      rpm: 120
+      tpm: 400000
+
+  - model_name: cerebras-compactor
+    litellm_params:
+      model: cerebras/llama-3.3-70b
+      api_key: os.environ/CEREBRAS_API_KEY
+      rpm: 120
+      tpm: 400000
+
+  # ── OpenRouter — universal fallback gateway ────────────────────────────────
+  - model_name: openrouter-gateway
+    litellm_params:
+      model: openrouter/auto
+      api_key: os.environ/OPENROUTER_API_KEY
+      api_base: https://openrouter.ai/api/v1
+      rpm: 100
+      tpm: 500000
+
+  # ── ZAI ───────────────────────────────────────────────────────────────────
+  - model_name: zai-model
+    litellm_params:
+      model: openai/glm-4-plus
+      api_key: os.environ/ZAI_API_KEY
+      api_base: https://open.bigmodel.cn/api/paas/v4
+      rpm: 60
+      tpm: 200000
+
+  # ── Kilo ──────────────────────────────────────────────────────────────────
+  - model_name: kilo-model
+    litellm_params:
+      model: openai/kilo-default
+      api_key: os.environ/KILO_API_KEY
+      api_base: https://api.kilo.ai/v1
+      rpm: 60
+      tpm: 200000
+
+  # ── OpenCode ──────────────────────────────────────────────────────────────
+  - model_name: opencode-model
+    litellm_params:
+      model: openai/opencode-default
+      api_key: os.environ/OPENCODE_API_KEY
+      api_base: https://api.opencode.ai/v1
+      rpm: 60
+      tpm: 300000
+
+  # ── MiniMax / OpenCode Zen — final fallback ───────────────────────────────
+  - model_name: minimax-fallback
+    litellm_params:
+      model: openai/MiniMax-Text-01
+      api_key: os.environ/OPENCODE_ZEN_API_KEY
+      api_base: os.environ/OPENCODE_ZEN_BASE_URL
+      rpm: 60
+      tpm: 500000
+
+# ════════════════════════════════════════════════════════════════════════════
+# ROUTING & FALLBACK CHAINS
+# ════════════════════════════════════════════════════════════════════════════
+router_settings:
+  routing_strategy: usage-based-routing-v2
+  allowed_fails: 2
+  cooldown_time: 30
+
+  fallbacks:
+    - gpt-5-heavy:        [claude-nuanced, gemini-pro, openrouter-gateway]
+    - gpt-codex:          [gpt-5-heavy, claude-nuanced, opencode-model]
+    - claude-nuanced:     [gpt-5-heavy, gemini-pro, openrouter-gateway]
+    - claude-opus:        [claude-nuanced, gpt-5-heavy]
+    - gemini-pro:         [claude-nuanced, gpt-5-heavy, openrouter-gateway]
+    - gemini-flash:       [cerebras-fast, groq-compactor]
+    - cerebras-fast:      [gemini-flash, groq-compactor]
+    - openrouter-gateway: [zai-model, kilo-model, minimax-fallback]
+    - zai-model:          [minimax-fallback, groq-compactor]
+    - kilo-model:         [openrouter-gateway, minimax-fallback]
+    - opencode-model:     [openrouter-gateway, minimax-fallback]
+    - minimax-fallback:   [groq-compactor, cerebras-compactor]
+
+  retry_after_failure_codes: [429, 500, 502, 503, 504]
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 120
+  num_retries: 2
+  set_verbose: false
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL

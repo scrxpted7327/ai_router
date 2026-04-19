@@ -1,0 +1,16 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+httpx>=0.27.0
+python-dotenv>=1.0.0
+
+# Database
+sqlalchemy[asyncio]>=2.0.0
+aiosqlite>=0.20.0
+
+# Auth
+bcrypt>=4.0.0
+
+# Providers
+anthropic>=0.40.0
+google-genai>=1.0.0
+groq>=0.9.0

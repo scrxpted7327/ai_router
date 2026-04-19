@@ -1,0 +1,36 @@
+# Secrets
+.env
+.env.bak
+.env.*.bak
+.env.env.bak
+
+# Database
+data/
+
+# pi-mono runtime
+.pi/
+.pi-lens/
+
+# Claude Code
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
