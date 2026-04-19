@@ -22,7 +22,42 @@ if TYPE_CHECKING:
     pass
 
 MODELS_DEV_URL = "https://models.dev/api.json"
-OPENROUTER_MODELS_CACHE: dict[str, tuple[int, list]] = {}
+DYNAMIC_MODELS_CACHE: dict[str, tuple[int, list]] = {}  # provider_id -> (timestamp, models)
+DYNAMIC_MODELS_TTL = 60 * 60 * 6  # 6 hours
+
+
+def _fetch_provider_models(provider_id: str, base_url: str, api_key: str, extra_headers: dict | None = None) -> list[dict] | None:
+    """Fetch model list from provider API with caching."""
+    now = int(time.time())
+
+    # Check cache
+    if provider_id in DYNAMIC_MODELS_CACHE:
+        cached_time, cached_models = DYNAMIC_MODELS_CACHE[provider_id]
+        if now - cached_time < DYNAMIC_MODELS_TTL:
+            return cached_models
+
+    # Fetch from API
+    try:
+        headers = {"Authorization": f"Bearer {api_key}"}
+        if extra_headers:
+            headers.update(extra_headers)
+
+        models_url = f"{base_url.rstrip('/')}/models"
+        with httpx.Client(timeout=5.0, follow_redirects=True) as client:
+            response = client.get(models_url, headers=headers)
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            models = data.get("data", [])
+
+            # Cache the results
+            DYNAMIC_MODELS_CACHE[provider_id] = (now, models)
+            return models
+    except Exception:
+        # Return cached data if available, even if expired
+        if provider_id in DYNAMIC_MODELS_CACHE:
+            return DYNAMIC_MODELS_CACHE[provider_id][1]
+        return None
 MODELS_DEV_CACHE_TTL = 60 * 60
 MODELS_DEV_CACHE_PATH = Path.home() / ".cache" / "ai_router" / "models.dev.json"
 BEDROCK_PROVIDER_ID = "amazon-bedrock"
@@ -461,7 +496,8 @@ def _auto_routing_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] 
 
 
 def _openrouter_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
-    if not _env("OPENROUTER_API_KEY"):
+    api_key = _env("OPENROUTER_API_KEY")
+    if not api_key:
         return None
     provider = ProviderConfig(
         "openrouter",
@@ -471,7 +507,12 @@ def _openrouter_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | 
         base_url="https://openrouter.ai/api/v1",
         extra_headers={"HTTP-Referer": "http://localhost", "X-Title": "ai-router"},
     )
-    models = (
+
+    # Fetch dynamic models from OpenRouter API
+    dynamic_models = _fetch_provider_models(provider.id, provider.base_url, api_key, provider.extra_headers)
+
+    # Static fallback models
+    static_models = (
         CatalogModel(provider.id, provider.api, provider.label, "auto",                                    "Auto (OpenRouter)",           ("openrouter",),           False, False, 200_000, 16_384),
         CatalogModel(provider.id, provider.api, provider.label, "anthropic/claude-opus-4-7",               "Claude Opus 4.7 (OR)",        ("claude-opus-or",),       True,  True,  200_000, 32_000),
         CatalogModel(provider.id, provider.api, provider.label, "anthropic/claude-sonnet-4-6",             "Claude Sonnet 4.6 (OR)",      ("claude-sonnet-or",),     False, True,  200_000, 16_000),
@@ -498,7 +539,35 @@ def _openrouter_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | 
         CatalogModel(provider.id, provider.api, provider.label, "meta-llama/llama-3.1-8b-instruct:free",   "Llama 3.1 8B (free)",         ("free-llama",),           False, False, 131_072,  8_192),
         CatalogModel(provider.id, provider.api, provider.label, "google/gemma-3-27b-it:free",              "Gemma 3 27B (free)",          ("free-gemma",),           False, True,  131_072,  8_192),
     )
-    return provider, models
+
+    # If dynamic fetch succeeded, convert to CatalogModel and merge with static
+    if dynamic_models:
+        catalog = []
+        static_ids = {m.model_id for m in static_models}
+
+        # Add all dynamic models
+        for m in dynamic_models:
+            model_id = m.get("id", "")
+            if not model_id or model_id in static_ids:
+                continue  # Skip if already in static list
+            catalog.append(CatalogModel(
+                provider_id=provider.id,
+                provider_api=provider.api,
+                provider_label=provider.label,
+                model_id=model_id,
+                name=m.get("name", model_id),
+                aliases=(),
+                reasoning=False,
+                vision=False,
+                context_window=m.get("context_length", 200_000),
+                max_tokens=m.get("top_provider", {}).get("max_completion_tokens", 16_384),
+            ))
+
+        # Add static models (they have better metadata)
+        catalog.extend(static_models)
+        return provider, tuple(catalog)
+
+    return provider, static_models
 
 
 def _zai_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
