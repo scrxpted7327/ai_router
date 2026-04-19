@@ -560,26 +560,43 @@ def _copilot_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | Non
             "Copilot-Integration-Id": "vscode-chat",
         },
     )
-    models = (
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.4-mini",            "GPT-5.4 Mini (Copilot)",      ("copilot-5.4",),               True,  True,  1_000_000, 32_768),
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.3-codex",           "GPT-5.3 Codex (Copilot)",     ("copilot-codex",),             True,  True,  1_000_000, 100_000),
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.2-codex",           "GPT-5.2 Codex (Copilot)",     ("copilot-5.2-codex",),         True,  True,  1_000_000, 100_000),
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.2",                 "GPT-5.2 (Copilot)",           ("copilot-5.2",),               False, True,  1_000_000, 32_768),
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-5-mini",              "GPT-5 Mini (Copilot)",        ("copilot-5-mini",),            False, True,  1_000_000, 16_384),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7",         "Claude Opus 4.7 (Copilot)",   ("claude-opus", "opus"),        True,  True,  200_000, 32_000),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-5",         "Claude Opus 4.5 (Copilot)",   ("claude-opus-4-5-copilot",),   True,  True,  200_000, 32_000),
+
+    # Static fallback models with good aliases
+    static_models = (
         CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4-6",       "Claude Sonnet 4.6 (Copilot)", ("claude-sonnet", "claude", "sonnet"), False, True, 200_000, 16_000),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4-5",       "Claude Sonnet 4.5 (Copilot)", ("claude-sonnet-4-5-copilot",), True,  True,  200_000, 16_000),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4",         "Claude Sonnet 4 (Copilot)",   ("claude-sonnet-4-copilot",),   False, True,  200_000, 16_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7",         "Claude Opus 4.7 (Copilot)",   ("claude-opus", "opus"),        True,  True,  200_000, 32_000),
         CatalogModel(provider.id, provider.api, provider.label, "claude-haiku-4-5-20251001","Claude Haiku 4.5 (Copilot)", ("claude-haiku", "haiku"),      False, True,  200_000,  8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "gemini-3.1-pro-preview",  "Gemini 3.1 Pro (Copilot)",    ("gemini-3.1-copilot",),        True,  True,  1_048_576, 65_536),
-        CatalogModel(provider.id, provider.api, provider.label, "gemini-3-flash",          "Gemini 3 Flash (Copilot)",    ("gemini-3-copilot",),          False, True,  1_048_576, 32_768),
-        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-pro",          "Gemini 2.5 Pro (Copilot)",    ("gemini-pro-copilot",),        True,  True,  1_048_576, 65_536),
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-4.1",                 "GPT-4.1 (Copilot)",           ("gpt-4.1-copilot",),           False, True,  1_047_576, 32_768),
         CatalogModel(provider.id, provider.api, provider.label, "gpt-4o",                  "GPT-4o (Copilot)",            ("github-copilot", "copilot"),  False, True,  128_000, 16_384),
-        CatalogModel(provider.id, provider.api, provider.label, "grok-code-fast-1",        "Grok Code Fast (Copilot)",    ("grok-copilot",),              False, False, 131_072,  8_192),
     )
-    return provider, models
+
+    # Fetch dynamic models from GitHub Copilot API
+    dynamic_models = _fetch_provider_models(provider.id, provider.base_url, token, provider.extra_headers)
+
+    if dynamic_models:
+        catalog = []
+        static_ids = {m.model_id for m in static_models}
+
+        for m in dynamic_models:
+            model_id = m.get("id", "")
+            if not model_id or model_id in static_ids:
+                continue
+            catalog.append(CatalogModel(
+                provider_id=provider.id,
+                provider_api=provider.api,
+                provider_label=provider.label,
+                model_id=model_id,
+                name=m.get("id", model_id),
+                aliases=(),
+                reasoning=False,
+                vision=False,
+                context_window=m.get("context_window", 200_000),
+                max_tokens=m.get("max_output_tokens", 16_384),
+            ))
+
+        catalog.extend(static_models)
+        return provider, tuple(catalog)
+
+    return provider, static_models
 
 
 def _groq_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
@@ -816,54 +833,48 @@ def _kilo_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
 
 
 def _opencode_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
-    if not _env("OPENCODE_API_KEY"):
+    """Unified OpenCode provider supporting both /v1 (main) and /zen/v1 (Zen) endpoints."""
+    api_key = _env("OPENCODE_API_KEY")
+    if not api_key:
         return None
+
+    # Use OPENCODE_BASE_URL to choose between main (default) and zen
+    base_url = _env("OPENCODE_BASE_URL") or "https://api.opencode.ai/v1"
+    is_zen = "zen" in base_url.lower()
+
     provider = ProviderConfig(
         "opencode",
         "openai",
-        "opencode",
+        "opencode" if not is_zen else "opencode-zen",
         ("OPENCODE_API_KEY",),
-        base_url=_env("OPENCODE_BASE_URL") or "https://api.opencode.ai/v1",
+        base_url=base_url,
     )
-    models = (
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.4-codex", "GPT-5.4 Codex (OpenCode)", ("opencode", "opencode-codex"), True, True, 1_000_000, 100_000),
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.3-codex", "GPT-5.3 Codex (OpenCode)", ("opencode-5.3",), True, True, 1_000_000, 100_000),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7", "Claude Opus 4.7 (OpenCode)", ("opencode-opus",), True, True, 200_000, 32_000),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4-6", "Claude Sonnet 4.6 (OpenCode)", ("opencode-sonnet",), False, True, 200_000, 16_000),
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.1", "GPT-5.1 (OpenCode)", ("opencode-5.1",), False, True, 1_047_576, 32_768),
-        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-pro", "Gemini 2.5 Pro (OpenCode)", ("opencode-gemini",), True, True, 1_048_576, 65_536),
-        CatalogModel(provider.id, provider.api, provider.label, "deepseek-r1", "DeepSeek R1 (OpenCode)", ("opencode-r1",), True, False, 163_840, 8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "o3", "o3 (OpenCode)", ("opencode-o3",), True, True, 200_000, 100_000),
-    )
-    return provider, models
 
-
-def _opencode_zen_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
-    if not _env("OPENCODE_ZEN_API_KEY"):
-        return None
-    provider = ProviderConfig(
-        "opencode-zen",
-        "openai",
-        "opencode zen",
-        ("OPENCODE_ZEN_API_KEY",),
-        base_url=_env("OPENCODE_ZEN_BASE_URL") or "https://opencode.ai/zen/v1",
-    )
+    # Combined model catalog from both main and Zen (Zen models have zen- prefixed aliases)
     models = (
-        CatalogModel(provider.id, provider.api, provider.label, "big-pickle", "Big Pickle (Zen)", ("zen-pickle",), True, True, 1_000_000, 100_000),
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.4", "GPT-5.4 (Zen)", ("zen-5.4",), True, True, 1_000_000, 100_000),
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.4-nano", "GPT-5.4 Nano (Zen)", ("zen-nano",), False, True, 1_000_000, 16_384),
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.3-codex", "GPT-5.3 Codex (Zen)", ("opencode-zen", "zen"), True, True, 1_000_000, 100_000),
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.2-codex", "GPT-5.2 Codex (Zen)", ("zen-5.2-codex",), True, True, 1_000_000, 100_000),
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-5-codex", "GPT-5 Codex (Zen)", ("zen-5-codex",), True, True, 1_000_000, 100_000),
-        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.1-codex-max", "GPT-5.1 Codex Max (Zen)", ("zen-codex-max",), True, True, 1_000_000, 100_000),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7", "Claude Opus 4.7 (Zen)", ("zen-opus",), True, True, 200_000, 32_000),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-6", "Claude Opus 4.6 (Zen)", ("zen-opus-4-6",), True, True, 200_000, 32_000),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4-6", "Claude Sonnet 4.6 (Zen)", ("zen-sonnet",), False, True, 200_000, 16_000),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-haiku-4-5", "Claude Haiku 4.5 (Zen)", ("zen-haiku",), False, True, 200_000, 8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "gemini-3.1-pro-preview", "Gemini 3.1 Pro (Zen)", ("zen-gemini-3",), True, True, 1_048_576, 65_536),
-        CatalogModel(provider.id, provider.api, provider.label, "gemini-3-flash", "Gemini 3 Flash (Zen)", ("zen-gemini-flash",), False, True, 1_048_576, 32_768),
-        CatalogModel(provider.id, provider.api, provider.label, "glm-5.1", "GLM-5.1 (Zen)", ("zen-glm-5",), False, False, 128_000, 4_096),
-        CatalogModel(provider.id, provider.api, provider.label, "kimi-k2.5", "Kimi K2.5 (Zen)", ("zen-kimi",), False, False, 200_000, 8_192),
+        # Main API models
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.4-codex", "GPT-5.4 Codex", ("opencode", "opencode-codex"), True, True, 1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.3-codex", "GPT-5.3 Codex", ("opencode-5.3",), True, True, 1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7", "Claude Opus 4.7", ("opencode-opus",), True, True, 200_000, 32_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4-6", "Claude Sonnet 4.6", ("opencode-sonnet",), False, True, 200_000, 16_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.1", "GPT-5.1", ("opencode-5.1",), False, True, 1_047_576, 32_768),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-pro", "Gemini 2.5 Pro", ("opencode-gemini",), True, True, 1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "deepseek-r1", "DeepSeek R1", ("opencode-r1",), True, False, 163_840, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "o3", "o3", ("opencode-o3",), True, True, 200_000, 100_000),
+
+        # Zen-specific models (use zen- aliases)
+        CatalogModel(provider.id, provider.api, provider.label, "big-pickle", "Big Pickle", ("zen-pickle", "opencode-zen"), True, True, 1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.4", "GPT-5.4", ("zen-5.4", "zen"), True, True, 1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.4-nano", "GPT-5.4 Nano", ("zen-nano",), False, True, 1_000_000, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.2-codex", "GPT-5.2 Codex", ("zen-5.2-codex",), True, True, 1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5-codex", "GPT-5 Codex", ("zen-5-codex",), True, True, 1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.1-codex-max", "GPT-5.1 Codex Max", ("zen-codex-max",), True, True, 1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-6", "Claude Opus 4.6", ("zen-opus-4-6",), True, True, 200_000, 32_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-haiku-4-5", "Claude Haiku 4.5", ("zen-haiku",), False, True, 200_000, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-3.1-pro-preview", "Gemini 3.1 Pro", ("zen-gemini-3",), True, True, 1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-3-flash", "Gemini 3 Flash", ("zen-gemini-flash",), False, True, 1_048_576, 32_768),
+        CatalogModel(provider.id, provider.api, provider.label, "glm-5.1", "GLM-5.1", ("zen-glm-5",), False, False, 128_000, 4_096),
+        CatalogModel(provider.id, provider.api, provider.label, "kimi-k2.5", "Kimi K2.5", ("zen-kimi",), False, False, 200_000, 8_192),
         CatalogModel(provider.id, provider.api, provider.label, "minimax-m2.5-free", "MiniMax M2.5 (free)", ("zen-free", "minimax-free"), False, False, 1_000_000, 8_192),
         CatalogModel(provider.id, provider.api, provider.label, "nemotron-3-super-free", "Nemotron 3 Super (free)", ("nemotron-free",), True, False, 131_072, 16_384),
         CatalogModel(provider.id, provider.api, provider.label, "qwen3.6-plus-free", "Qwen 3.6 Plus (free)", ("qwen-zen-free",), False, False, 131_072, 8_192),
@@ -1046,7 +1057,6 @@ def _provider_specs() -> list[tuple[ProviderConfig, tuple[CatalogModel, ...]]]:
         _zai_provider,
         _kilo_provider,
         _opencode_provider,
-        _opencode_zen_provider,
         _bedrock_provider,
     ):
         spec = builder()
