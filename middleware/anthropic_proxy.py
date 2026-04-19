@@ -25,6 +25,7 @@ from sqlalchemy import select
 
 from . import registry as reg
 from .db import GatewayApiToken, ModelControl, SessionLocal, User
+from .providers import bedrock as bedrock_provider
 from .providers import gemini as gemini_provider
 from .providers import openai_compat
 
@@ -182,6 +183,8 @@ async def _as_anthropic_stream(
 async def _complete(entry: reg.ModelEntry, body: dict) -> dict:
     if entry.provider == "gemini":
         return await gemini_provider.chat(entry.model_id, body, entry.api_key)
+    if entry.provider == "bedrock":
+        return await bedrock_provider.chat(entry.model_id, body, entry.options)
     return await openai_compat.chat(
         entry.model_id, body, entry.api_key, entry.base_url, entry.extra_headers
     )
@@ -190,6 +193,8 @@ async def _complete(entry: reg.ModelEntry, body: dict) -> dict:
 def _stream(entry: reg.ModelEntry, body: dict) -> AsyncIterator[str]:
     if entry.provider == "gemini":
         return gemini_provider.stream(entry.model_id, body, entry.api_key)
+    if entry.provider == "bedrock":
+        return bedrock_provider.stream(entry.model_id, body, entry.options)
     return openai_compat.stream(
         entry.model_id, body, entry.api_key, entry.base_url, entry.extra_headers
     )
@@ -214,7 +219,7 @@ async def messages(request: Request):
     if not entry:
         raise HTTPException(status_code=404, detail=f"Model '{requested_model}' not found in gateway registry")
 
-    if not entry.api_key or "REPLACE_ME" in entry.api_key:
+    if entry.provider != "bedrock" and (not entry.api_key or "REPLACE_ME" in entry.api_key):
         raise HTTPException(status_code=503, detail=f"No API key configured for '{requested_model}'")
 
     oai_body = _to_openai_body(body)

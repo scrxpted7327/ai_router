@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import sys
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator
@@ -40,6 +41,7 @@ from .compactor import compact, needs_compaction
 from .db import ModelControl, Session, SessionLocal, User, init_db
 from .format_adapter import normalise_request, stream_as_responses_api
 from .router import route
+from .providers import bedrock as bedrock_provider
 from .providers import gemini as gemini_provider
 from .providers import openai_compat
 
@@ -69,7 +71,16 @@ def _cors_origins() -> list[str]:
     return [o.strip() for o in raw.split(",") if o.strip()] or ["*"]
 
 
-app = FastAPI(title="Unified AI Gateway", version="2.0.0")
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    await init_db()
+    reg.init(str(ENV_PATH))
+    log.info("Registry loaded — %d models available", len(reg.list_models()))
+    await _run_startup_pi_auth_check()
+    yield
+
+
+app = FastAPI(title="Unified AI Gateway", version="2.0.0", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
@@ -80,14 +91,6 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(anthropic_router)
-
-
-@app.on_event("startup")
-async def startup() -> None:
-    await init_db()
-    reg.init(str(ENV_PATH))
-    log.info("Registry loaded — %d models available", len(reg.list_models()))
-    await _run_startup_pi_auth_check()
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -524,7 +527,7 @@ async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
     else:
         log.info("Model '%s' → %s (%s)", requested, entry.model_id, entry.provider)
 
-    if not entry.api_key or "REPLACE_ME" in entry.api_key:
+    if entry.provider != "bedrock" and (not entry.api_key or "REPLACE_ME" in entry.api_key):
         raise HTTPException(status_code=401,
                             detail=f"No API key for '{entry.provider}'. Run `python pi_auth.py`.")
 
@@ -544,6 +547,8 @@ async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
 async def _complete(entry: reg.ModelEntry, body: dict) -> dict:
     if entry.provider == "gemini":
         return await gemini_provider.chat(entry.model_id, body, entry.api_key)
+    if entry.provider == "bedrock":
+        return await bedrock_provider.chat(entry.model_id, body, entry.options)
     return await openai_compat.chat(
         entry.model_id, body, entry.api_key, entry.base_url, entry.extra_headers
     )
@@ -552,6 +557,9 @@ async def _complete(entry: reg.ModelEntry, body: dict) -> dict:
 async def _stream(entry: reg.ModelEntry, body: dict) -> AsyncIterator[str]:
     if entry.provider == "gemini":
         async for chunk in gemini_provider.stream(entry.model_id, body, entry.api_key):
+            yield chunk
+    elif entry.provider == "bedrock":
+        async for chunk in bedrock_provider.stream(entry.model_id, body, entry.options):
             yield chunk
     else:
         async for chunk in openai_compat.stream(
