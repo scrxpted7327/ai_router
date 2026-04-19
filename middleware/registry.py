@@ -519,7 +519,8 @@ def _kilo_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
         return None
     provider = ProviderConfig("kilo", "openai", "kilo", ("KILO_API_KEY",), base_url="https://api.kilo.ai/api/gateway", extra_headers={"HTTP-Referer": "https://ai.scrxpted.cc/", "X-Title": "ai-router"})
     models = (
-        CatalogModel(provider.id, provider.api, provider.label, "openai/gpt-5.4", "GPT-5.4 (Kilo)", ("kilo-gpt5", "kilo"), True, True, 1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "kilo-auto-free", "Kilo Auto Free", ("kilo", "kilo-free"), False, False, 200_000, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "openai/gpt-5.4", "GPT-5.4 (Kilo)", ("kilo-gpt5",), True, True, 1_000_000, 100_000),
         CatalogModel(provider.id, provider.api, provider.label, "openai/gpt-5.1", "GPT-5.1 (Kilo)", ("kilo-gpt5.1",), False, True, 1_047_576, 32_768),
         CatalogModel(provider.id, provider.api, provider.label, "anthropic/claude-opus-4-7", "Claude Opus 4.7 (Kilo)", ("kilo-opus",), True, True, 200_000, 32_000),
         CatalogModel(provider.id, provider.api, provider.label, "anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6 (Kilo)", ("kilo-sonnet",), False, True, 200_000, 16_000),
@@ -527,7 +528,7 @@ def _kilo_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
         CatalogModel(provider.id, provider.api, provider.label, "google/gemini-2.5-pro", "Gemini 2.5 Pro (Kilo)", ("kilo-gemini",), True, True, 1_048_576, 65_536),
         CatalogModel(provider.id, provider.api, provider.label, "deepseek/deepseek-r1", "DeepSeek R1 (Kilo)", ("kilo-r1",), True, False, 163_840, 8_192),
         CatalogModel(provider.id, provider.api, provider.label, "meta-llama/llama-4-maverick", "Llama 4 Maverick (Kilo)", ("kilo-llama4",), False, True, 524_288, 8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "free/giga-potato", "Giga Potato (free)", ("kilo-free",), False, False, 131_072, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "free/giga-potato", "Giga Potato (free)", ("giga-potato-free",), False, False, 131_072, 8_192),
     )
     return provider, models
 
