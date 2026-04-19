@@ -305,10 +305,13 @@ def _openai_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None
 
 
 def _mistral_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
-    if not _env("MISTRAL_API_KEY"):
+    api_key = _env("MISTRAL_API_KEY")
+    if not api_key:
         return None
     provider = ProviderConfig("mistral", "openai", "mistral", ("MISTRAL_API_KEY",), base_url="https://api.mistral.ai/v1")
-    models = (
+
+    # Static fallback models
+    static_models = (
         CatalogModel(provider.id, provider.api, provider.label, "mistral-large-latest",  "Mistral Large",    ("mistral-large",),   False, False, 131_072, 4_096),
         CatalogModel(provider.id, provider.api, provider.label, "mistral-medium-latest", "Mistral Medium",   ("mistral-medium",),  False, False, 131_072, 4_096),
         CatalogModel(provider.id, provider.api, provider.label, "mistral-small-latest",  "Mistral Small",    ("mistral-small",),   False, False, 131_072, 4_096),
@@ -316,7 +319,35 @@ def _mistral_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | Non
         CatalogModel(provider.id, provider.api, provider.label, "mistral-nemo",          "Mistral Nemo",     ("mistral-nemo",),    False, False, 131_072, 4_096),
         CatalogModel(provider.id, provider.api, provider.label, "pixtral-large-latest",  "Pixtral Large",    ("pixtral-large",),   False, True,  131_072, 4_096),
     )
-    return provider, models
+
+    # Fetch dynamic models from Mistral API
+    dynamic_models = _fetch_provider_models(provider.id, provider.base_url, api_key)
+
+    if dynamic_models:
+        catalog = []
+        static_ids = {m.model_id for m in static_models}
+
+        for m in dynamic_models:
+            model_id = m.get("id", "")
+            if not model_id or model_id in static_ids:
+                continue
+            catalog.append(CatalogModel(
+                provider_id=provider.id,
+                provider_api=provider.api,
+                provider_label=provider.label,
+                model_id=model_id,
+                name=m.get("id", model_id),
+                aliases=(),
+                reasoning=False,
+                vision=False,
+                context_window=m.get("context_window", 131_072),
+                max_tokens=4_096,
+            ))
+
+        catalog.extend(static_models)
+        return provider, tuple(catalog)
+
+    return provider, static_models
 
 
 def _deepseek_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
@@ -343,10 +374,13 @@ def _xai_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
 
 
 def _together_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
-    if not _env("TOGETHER_API_KEY"):
+    api_key = _env("TOGETHER_API_KEY")
+    if not api_key:
         return None
     provider = ProviderConfig("together", "openai", "together", ("TOGETHER_API_KEY",), base_url="https://api.together.xyz/v1")
-    models = (
+
+    # Static fallback models
+    static_models = (
         CatalogModel(provider.id, provider.api, provider.label, "meta-llama/Llama-3.3-70B-Instruct-Turbo",   "Llama 3.3 70B (Together)",    ("llama-together",),         False, False, 131_072, 8_192),
         CatalogModel(provider.id, provider.api, provider.label, "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo", "Llama 3.1 405B (Together)", ("llama-405b",),           False, False, 130_815, 8_192),
         CatalogModel(provider.id, provider.api, provider.label, "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", "Llama 4 Maverick (Together)", ("llama-4-maverick",), False, True,  524_288, 8_192),
@@ -355,7 +389,35 @@ def _together_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | No
         CatalogModel(provider.id, provider.api, provider.label, "Qwen/QwQ-32B-Preview",                       "QwQ 32B (Together)",          ("qwq-together",),           True,  False, 32_768,  8_192),
         CatalogModel(provider.id, provider.api, provider.label, "mistralai/Mistral-7B-Instruct-v0.3",         "Mistral 7B (Together)",       ("mistral-7b-together",),    False, False, 32_768,  4_096),
     )
-    return provider, models
+
+    # Fetch dynamic models from Together API
+    dynamic_models = _fetch_provider_models(provider.id, provider.base_url, api_key)
+
+    if dynamic_models:
+        catalog = []
+        static_ids = {m.model_id for m in static_models}
+
+        for m in dynamic_models:
+            model_id = m.get("id", "")
+            if not model_id or model_id in static_ids:
+                continue
+            catalog.append(CatalogModel(
+                provider_id=provider.id,
+                provider_api=provider.api,
+                provider_label=provider.label,
+                model_id=model_id,
+                name=m.get("display_name", model_id),
+                aliases=(),
+                reasoning=False,
+                vision=False,
+                context_window=m.get("context_length", 131_072),
+                max_tokens=8_192,
+            ))
+
+        catalog.extend(static_models)
+        return provider, tuple(catalog)
+
+    return provider, static_models
 
 
 def _perplexity_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
@@ -437,10 +499,13 @@ def _copilot_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | Non
 
 
 def _groq_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
-    if not _env("GROQ_API_KEY"):
+    api_key = _env("GROQ_API_KEY")
+    if not api_key:
         return None
     provider = ProviderConfig("groq", "openai", "groq", ("GROQ_API_KEY",), base_url="https://api.groq.com/openai/v1")
-    models = (
+
+    # Static fallback models
+    static_models = (
         CatalogModel(provider.id, provider.api, provider.label, "meta-llama/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick (Groq)", ("llama-4-maverick-groq",), False, True,  1_047_576, 8_192),
         CatalogModel(provider.id, provider.api, provider.label, "meta-llama/llama-4-scout-17b-16e-instruct",     "Llama 4 Scout (Groq)",    ("llama-4-scout-groq",),    False, True,  131_072,   8_192),
         CatalogModel(provider.id, provider.api, provider.label, "llama-3.3-70b-versatile",       "Llama 3.3 70B (Groq)",          ("llama-3.3-70b", "llama", "groq"), False, False, 128_000, 32_768),
@@ -458,14 +523,45 @@ def _groq_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
         CatalogModel(provider.id, provider.api, provider.label, "mistral-saba-24b",               "Mistral Saba 24B (Groq)",       ("mistral-saba-groq",),             False, False,  32_768,  4_096),
         CatalogModel(provider.id, provider.api, provider.label, "gemma2-9b-it",                   "Gemma 2 9B (Groq)",             ("gemma2-groq",),                   False, False,   8_192,  8_192),
     )
-    return provider, models
+
+    # Fetch dynamic models from Groq API
+    dynamic_models = _fetch_provider_models(provider.id, provider.base_url, api_key)
+
+    if dynamic_models:
+        catalog = []
+        static_ids = {m.model_id for m in static_models}
+
+        for m in dynamic_models:
+            model_id = m.get("id", "")
+            if not model_id or model_id in static_ids:
+                continue
+            catalog.append(CatalogModel(
+                provider_id=provider.id,
+                provider_api=provider.api,
+                provider_label=provider.label,
+                model_id=model_id,
+                name=m.get("id", model_id),
+                aliases=(),
+                reasoning=False,
+                vision=False,
+                context_window=m.get("context_window", 128_000),
+                max_tokens=8_192,
+            ))
+
+        catalog.extend(static_models)
+        return provider, tuple(catalog)
+
+    return provider, static_models
 
 
 def _cerebras_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
-    if not _env("CEREBRAS_API_KEY"):
+    api_key = _env("CEREBRAS_API_KEY")
+    if not api_key:
         return None
     provider = ProviderConfig("cerebras", "openai", "cerebras", ("CEREBRAS_API_KEY",), base_url="https://api.cerebras.ai/v1", extra_headers={"X-Cerebras-3rd-Party-Integration": "ai-router"})
-    models = (
+
+    # Static fallback models
+    static_models = (
         CatalogModel(provider.id, provider.api, provider.label, "llama-3.3-70b",       "Llama 3.3 70B (Cerebras)",        ("llama-3.3-70b-cerebras", "cerebras", "cerebras-fast"), False, False, 128_000, 8_192),
         CatalogModel(provider.id, provider.api, provider.label, "llama3.1-70b",        "Llama 3.1 70B (Cerebras)",        ("llama3.1-70b-cerebras",),                              False, False, 128_000, 8_192),
         CatalogModel(provider.id, provider.api, provider.label, "llama3.1-8b",         "Llama 3.1 8B (Cerebras)",         ("llama3.1-8b-cerebras",),                               False, False, 128_000, 8_192),
@@ -476,7 +572,35 @@ def _cerebras_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | No
         CatalogModel(provider.id, provider.api, provider.label, "gpt-oss-120b",        "GPT-OSS 120B (Cerebras)",         ("gpt-oss-cerebras",),                                   False, False, 131_072, 16_384),
         CatalogModel(provider.id, provider.api, provider.label, "zai-glm-4.7",         "GLM-4.7 (Cerebras)",              ("glm-cerebras",),                                       False, True,  128_000,  4_096),
     )
-    return provider, models
+
+    # Fetch dynamic models from Cerebras API
+    dynamic_models = _fetch_provider_models(provider.id, provider.base_url, api_key, provider.extra_headers)
+
+    if dynamic_models:
+        catalog = []
+        static_ids = {m.model_id for m in static_models}
+
+        for m in dynamic_models:
+            model_id = m.get("id", "")
+            if not model_id or model_id in static_ids:
+                continue
+            catalog.append(CatalogModel(
+                provider_id=provider.id,
+                provider_api=provider.api,
+                provider_label=provider.label,
+                model_id=model_id,
+                name=m.get("id", model_id),
+                aliases=(),
+                reasoning=False,
+                vision=False,
+                context_window=m.get("context_window", 128_000),
+                max_tokens=8_192,
+            ))
+
+        catalog.extend(static_models)
+        return provider, tuple(catalog)
+
+    return provider, static_models
 
 
 def _auto_routing_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
