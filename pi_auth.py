@@ -39,11 +39,10 @@ _DEFAULT_ENV = Path(__file__).parent / ".env"
 # ── Provider → env var mapping ────────────────────────────────────────────────
 # Matches actual keys in pi-mono auth.json
 _PROVIDER_MAP: dict[str, dict[str, str]] = {
-    "anthropic":         {"env": "ANTHROPIC_API_KEY",    "name": "Claude (Anthropic)"},
-    "github-copilot":    {"env": "GITHUB_COPILOT_TOKEN", "name": "GitHub Copilot"},
-    "google-gemini-cli": {"env": "GEMINI_API_KEY",        "name": "Gemini CLI"},
-    "google-antigravity":{"env": "GEMINI_ANTIGRAVITY_KEY","name": "Gemini Antigravity"},
-    "openai-codex":      {"env": "OPENAI_CODEX_API_KEY", "name": "Codex (OpenAI)"},
+    "github-copilot": {"env": "GITHUB_COPILOT_TOKEN", "name": "GitHub Copilot"},
+    "google-gemini-cli": {"env": "GEMINI_CLI_TOKEN", "name": "Google Gemini CLI"},
+    "google-antigravity": {"env": "ANTIGRAVITY_TOKEN", "name": "Google Antigravity"},
+    "openai-codex": {"env": "OPENAI_CODEX_TOKEN", "name": "OpenAI Codex"},
 }
 
 # ── Google OAuth2 client credentials (from pi-mono source) ───────────────────

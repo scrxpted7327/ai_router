@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text, func, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -30,6 +30,7 @@ class User(Base):
     email        = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
     is_whitelisted = Column(Boolean, default=False, nullable=False)
+    is_admin = Column(Boolean, default=False, nullable=False)
     created_at   = Column(DateTime(timezone=True), server_default=func.now())
 
     sessions      = relationship("Session", back_populates="user", cascade="all, delete-orphan")
@@ -80,3 +81,7 @@ class Conversation(Base):
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        user_cols = (await conn.execute(text("PRAGMA table_info(users)"))).fetchall()
+        user_col_names = {str(row[1]) for row in user_cols}
+        if "is_admin" not in user_col_names:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"))

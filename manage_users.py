@@ -4,7 +4,10 @@ User management CLI.
 Usage:
     python manage_users.py list
     python manage_users.py create <email> <password>
+    python manage_users.py change-password <email> <new-password>
     python manage_users.py whitelist <email>
+    python manage_users.py promote-admin <email>
+    python manage_users.py demote-admin <email>
     python manage_users.py revoke <email>
     python manage_users.py delete <email>
     python manage_users.py token-create <email> [label]
@@ -37,10 +40,13 @@ async def cmd_list():
     if not users:
         print("No users.")
         return
-    print(f"{'Email':<35} {'Whitelisted':<12} {'ID'}")
-    print("-" * 75)
+    print(f"{'Email':<35} {'Whitelisted':<12} {'Admin':<8} {'ID'}")
+    print("-" * 84)
     for u in users:
-        print(f"{u.email:<35} {'YES' if u.is_whitelisted else 'no':<12} {u.id}")
+        print(
+            f"{u.email:<35} {'YES' if u.is_whitelisted else 'no':<12} "
+            f"{'YES' if u.is_admin else 'no':<8} {u.id}"
+        )
 
 
 async def cmd_create(email: str, password: str):
@@ -53,6 +59,17 @@ async def cmd_create(email: str, password: str):
         db.add(user)
         await db.commit()
     print(f"Created: {email} (not whitelisted — run `whitelist` to grant access)")
+
+
+async def cmd_change_password(email: str, password: str):
+    async with SessionLocal() as db:
+        user = (await db.execute(select(User).where(User.email == email))).scalars().first()
+        if not user:
+            print(f"ERROR: {email} not found")
+            return
+        user.password_hash = _hash(password)
+        await db.commit()
+    print(f"Password updated: {email}")
 
 
 async def cmd_whitelist(email: str):
@@ -75,6 +92,28 @@ async def cmd_revoke(email: str):
         user.is_whitelisted = False
         await db.commit()
     print(f"Revoked whitelist: {email}")
+
+
+async def cmd_promote_admin(email: str):
+    async with SessionLocal() as db:
+        user = (await db.execute(select(User).where(User.email == email))).scalars().first()
+        if not user:
+            print(f"ERROR: {email} not found")
+            return
+        user.is_admin = True
+        await db.commit()
+    print(f"Promoted to admin: {email}")
+
+
+async def cmd_demote_admin(email: str):
+    async with SessionLocal() as db:
+        user = (await db.execute(select(User).where(User.email == email))).scalars().first()
+        if not user:
+            print(f"ERROR: {email} not found")
+            return
+        user.is_admin = False
+        await db.commit()
+    print(f"Demoted from admin: {email}")
 
 
 async def cmd_delete(email: str):
@@ -144,8 +183,14 @@ async def main():
         await cmd_list()
     elif cmd == "create" and len(args) == 3:
         await cmd_create(args[1], args[2])
+    elif cmd == "change-password" and len(args) == 3:
+        await cmd_change_password(args[1], args[2])
     elif cmd == "whitelist" and len(args) == 2:
         await cmd_whitelist(args[1])
+    elif cmd == "promote-admin" and len(args) == 2:
+        await cmd_promote_admin(args[1])
+    elif cmd == "demote-admin" and len(args) == 2:
+        await cmd_demote_admin(args[1])
     elif cmd == "revoke" and len(args) == 2:
         await cmd_revoke(args[1])
     elif cmd == "delete" and len(args) == 2:

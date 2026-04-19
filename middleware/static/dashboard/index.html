@@ -10,6 +10,8 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
+    <link rel="stylesheet" href="/static/terminal/terminal.css" />
     <link rel="stylesheet" href="/static/dashboard/dashboard.css" />
   </head>
   <body>
@@ -96,6 +98,12 @@
           </button>
           <button type="button" data-tab="connect">
             <span class="nav-ico">⎘</span> Connect
+          </button>
+          <button type="button" data-tab="auth" class="admin-only hidden">
+            <span class="nav-ico">⛁</span> Auth
+          </button>
+          <button type="button" data-tab="terminal" class="admin-only hidden">
+            <span class="nav-ico">⌨</span> Terminal
           </button>
         </nav>
         <div class="sidebar-footer">
@@ -209,9 +217,43 @@
             <div id="connect-curl" class="help-pre"></div>
           </div>
         </section>
+
+        <section data-panel="auth" class="hidden">
+          <div class="panel">
+            <div class="panel-top">
+              <h2>Provider auth status</h2>
+              <button type="button" class="btn btn-primary" id="btn-auth-refresh">
+                Refresh tokens
+              </button>
+            </div>
+            <p class="panel-note">
+              Refreshes <code>~/.pi/agent/auth.json</code> tokens where possible and upserts
+              mapped keys into <code>.env</code>.
+            </p>
+            <div id="auth-status" class="auth-status"></div>
+          </div>
+        </section>
+
+        <section data-panel="terminal" class="hidden">
+          <div class="panel">
+            <div class="panel-top">
+              <h2>Pi login terminal</h2>
+              <div class="btn-row">
+                <button type="button" class="btn btn-primary" id="btn-term-connect">Connect</button>
+                <button type="button" class="btn" id="btn-term-clear">Clear</button>
+              </div>
+            </div>
+            <p class="panel-note">
+              Restricted to <code>pi /login</code>. Arrow keys, Enter, and paste are forwarded as-is.
+            </p>
+            <div id="terminal-status" class="msg hidden"></div>
+            <div id="terminal-shell" class="terminal-shell"></div>
+          </div>
+        </section>
       </main>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js" defer></script>
     <script src="/static/dashboard/dashboard.js" defer></script>
     <script>
       document.getElementById("gate-show-login").addEventListener("click", () => {

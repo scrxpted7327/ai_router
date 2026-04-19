@@ -10,6 +10,14 @@ const state = {
   models: null,
   conversations: null,
   selectedConv: null,
+  piStatus: null,
+  terminal: {
+    term: null,
+    socket: null,
+    fitTimer: null,
+    onDataBound: false,
+    resizeBound: false,
+  },
 };
 
 const api = (path, opts = {}) =>
@@ -32,7 +40,7 @@ async function fetchMe() {
 
 async function fetchHealth() {
   const r = await fetch("/health");
-  state.health = r.ok ? await r.json() : { status: "error", models: "—" };
+  state.health = r.ok ? await r.json() : { status: "error", models: "-" };
 }
 
 async function fetchModels() {
@@ -60,6 +68,37 @@ async function fetchConversation(id) {
   state.selectedConv = await r.json();
 }
 
+async function fetchPiStatus() {
+  if (!state.user?.is_admin) {
+    state.piStatus = null;
+    return;
+  }
+  const r = await api("/auth/pi/status");
+  if (r.status === 403) {
+    state.piStatus = null;
+    return;
+  }
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    state.piStatus = {
+      providers: [],
+      error: data.detail || `GET /auth/pi/status ${r.status}`,
+    };
+    return;
+  }
+  state.piStatus = await r.json();
+}
+
+async function refreshPiTokens() {
+  const r = await api("/auth/pi/refresh-tokens", { method: "POST" });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(data.detail || "Failed to refresh tokens");
+  }
+  state.piStatus = data;
+  renderPiStatus();
+}
+
 function showAuthGate() {
   $("#view-gate").classList.remove("hidden");
   $("#view-app").classList.add("hidden");
@@ -74,8 +113,13 @@ function renderUserPill() {
   const u = state.user;
   const el = $("#user-pill");
   if (!u) {
-    el.textContent = "—";
+    el.textContent = "-";
     el.className = "pill";
+    return;
+  }
+  if (u.is_admin) {
+    el.textContent = "admin";
+    el.className = "pill ok";
     return;
   }
   el.textContent = u.is_whitelisted ? "whitelisted" : "pending whitelist";
@@ -86,8 +130,8 @@ function renderOverview() {
   const h = state.health || {};
   $("#stat-status").textContent = h.status === "ok" ? "online" : "check";
   $("#stat-models").textContent =
-    typeof h.models === "number" ? String(h.models) : "—";
-  $("#stat-user").textContent = state.user ? state.user.email : "—";
+    typeof h.models === "number" ? String(h.models) : "-";
+  $("#stat-user").textContent = state.user ? state.user.email : "-";
 }
 
 function renderModels() {
@@ -102,7 +146,7 @@ function renderModels() {
   for (const m of data) {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td class="mono">${escapeHtml(m.id)}</td><td>${escapeHtml(
-      m.owned_by || "—"
+      m.owned_by || "-"
     )}</td>`;
     body.appendChild(tr);
   }
@@ -127,7 +171,7 @@ function renderConversations() {
   }
   if (!state.user.is_whitelisted) {
     list.innerHTML =
-      '<div class="empty">Your account is not whitelisted yet — /auth/conversations is blocked.</div>';
+      '<div class="empty">Your account is not whitelisted yet - /auth/conversations is blocked.</div>';
     return;
   }
   const rows = state.conversations;
@@ -158,10 +202,177 @@ function renderConversations() {
   }
 }
 
+function renderPiStatus() {
+  const box = $("#auth-status");
+  if (!box) return;
+
+  if (!state.user?.is_admin) {
+    box.innerHTML = '<div class="empty">Admin access required.</div>';
+    return;
+  }
+
+  if (!state.piStatus?.providers?.length) {
+    if (state.piStatus?.error) {
+      box.innerHTML = `<div class="empty">${escapeHtml(String(state.piStatus.error))}</div>`;
+      return;
+    }
+    box.innerHTML = '<div class="empty">No provider status available.</div>';
+    return;
+  }
+
+  box.innerHTML = state.piStatus.providers
+    .map((p) => {
+      const ready = p.has_token && !p.expired;
+      const status = ready ? "ready" : "needs login";
+      return `<div class="auth-row">
+        <div><strong>${escapeHtml(p.name)}</strong></div>
+        <div class="mono">${escapeHtml(p.env)}</div>
+        <div class="state ${ready ? "ok" : "bad"}">${status}</div>
+        <div class="mono">expires: ${escapeHtml(p.expires || "-")}</div>
+      </div>`;
+    })
+    .join("");
+}
+
 function selectConversation(id) {
   fetchConversation(id).then(() => {
     renderConversations();
   });
+}
+
+function updateAdminNav() {
+  const show = Boolean(state.user?.is_admin);
+  document.querySelectorAll(".admin-only").forEach((el) => {
+    el.classList.toggle("hidden", !show);
+  });
+}
+
+function ensureTerminal() {
+  if (state.terminal.term) return state.terminal.term;
+  const host = $("#terminal-shell");
+  if (!host || !window.Terminal) return null;
+  const term = new window.Terminal({
+    cursorBlink: true,
+    fontFamily: '"JetBrains Mono", "Cascadia Code", monospace',
+    fontSize: 13,
+    theme: {
+      background: "#07080d",
+      foreground: "#e8eaef",
+      cursor: "#2dd4bf",
+      black: "#121520",
+      red: "#f87171",
+      green: "#2dd4bf",
+      yellow: "#fbbf24",
+      blue: "#60a5fa",
+      magenta: "#a78bfa",
+      cyan: "#22d3ee",
+      white: "#f3f4f6",
+      brightBlack: "#64748b",
+      brightRed: "#fca5a5",
+      brightGreen: "#5eead4",
+      brightYellow: "#fde68a",
+      brightBlue: "#93c5fd",
+      brightMagenta: "#c4b5fd",
+      brightCyan: "#67e8f9",
+      brightWhite: "#ffffff",
+    },
+  });
+  term.open(host);
+  term.writeln("pi /login terminal ready. Press Connect to start.");
+  state.terminal.term = term;
+  return term;
+}
+
+function showTerminalStatus(message, kind = "ok") {
+  const el = $("#terminal-status");
+  if (!el) return;
+  el.className = `msg ${kind === "error" ? "error" : "ok"}`;
+  el.textContent = message;
+  el.classList.remove("hidden");
+}
+
+function closeTerminalSocket() {
+  const socket = state.terminal.socket;
+  state.terminal.socket = null;
+  if (socket && socket.readyState <= 1) {
+    socket.close();
+  }
+}
+
+function connectTerminal() {
+  if (!state.user?.is_admin) {
+    showTerminalStatus("Admin access required", "error");
+    return;
+  }
+
+  const term = ensureTerminal();
+  if (!term) {
+    showTerminalStatus("Terminal client failed to initialize", "error");
+    return;
+  }
+
+  closeTerminalSocket();
+  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${scheme}://${window.location.host}/terminal?cmd=%2Flogin`);
+  state.terminal.socket = ws;
+
+  ws.addEventListener("open", () => {
+    term.focus();
+    term.writeln("\r\n[connected] running: pi /login\r\n");
+    showTerminalStatus("Connected", "ok");
+  });
+
+  ws.addEventListener("message", (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (msg.type === "output") {
+      term.write(msg.data || "");
+      return;
+    }
+    if (msg.type === "error") {
+      term.writeln(`\r\n[error] ${msg.data || "Unknown error"}\r\n`);
+      showTerminalStatus(msg.data || "Terminal error", "error");
+      return;
+    }
+    if (msg.type === "exit") {
+      term.writeln(`\r\n[exit ${msg.code}]\r\n`);
+    }
+  });
+
+  ws.addEventListener("close", () => {
+    if (state.terminal.socket === ws) state.terminal.socket = null;
+    term.writeln("\r\n[disconnected]\r\n");
+  });
+
+  ws.addEventListener("error", () => {
+    showTerminalStatus("WebSocket failed", "error");
+  });
+
+  if (!state.terminal.onDataBound) {
+    term.onData((data) => {
+      const current = state.terminal.socket;
+      if (!current || current.readyState !== WebSocket.OPEN) return;
+      current.send(JSON.stringify({ type: "input", data }));
+    });
+    state.terminal.onDataBound = true;
+  }
+
+  if (!state.terminal.resizeBound) {
+    window.addEventListener("resize", () => {
+      if (state.terminal.fitTimer) clearTimeout(state.terminal.fitTimer);
+      state.terminal.fitTimer = setTimeout(() => {
+        const current = state.terminal.socket;
+        if (current && current.readyState === WebSocket.OPEN) {
+          current.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+        }
+      }, 120);
+    });
+    state.terminal.resizeBound = true;
+  }
 }
 
 async function setTab(name) {
@@ -178,6 +389,8 @@ async function setTab(name) {
       models: "Models",
       memory: "Memory",
       connect: "Connect",
+      auth: "Auth",
+      terminal: "Terminal",
     }[name] || "";
 
   if (name === "models") renderModels();
@@ -186,6 +399,13 @@ async function setTab(name) {
     renderConversations();
   }
   if (name === "connect") renderConnect();
+  if (name === "auth") {
+    await fetchPiStatus();
+    renderPiStatus();
+  }
+  if (name === "terminal") {
+    ensureTerminal();
+  }
 }
 
 function renderConnect() {
@@ -243,10 +463,12 @@ async function onRegister(e) {
 }
 
 async function onLogout() {
+  closeTerminalSocket();
   await api("/auth/logout", { method: "POST" });
   state.user = null;
   state.conversations = null;
   state.selectedConv = null;
+  state.piStatus = null;
   await refreshAll();
 }
 
@@ -261,10 +483,14 @@ async function refreshAll() {
     const id = state.selectedConv.id;
     await fetchConversation(id);
   }
+  if (state.user?.is_admin && state.tab === "auth") {
+    await fetchPiStatus();
+  }
 
   if (!state.user) {
     showAuthGate();
     renderOverview();
+    updateAdminNav();
     return;
   }
   showApp();
@@ -274,12 +500,27 @@ async function refreshAll() {
   renderModels();
   renderConversations();
   renderConnect();
+  renderPiStatus();
+  updateAdminNav();
 }
 
 function wire() {
   $("#form-login").addEventListener("submit", onLogin);
   $("#form-register").addEventListener("submit", onRegister);
   $("#btn-logout").addEventListener("click", onLogout);
+  $("#btn-auth-refresh").addEventListener("click", async () => {
+    try {
+      await refreshPiTokens();
+      showTerminalStatus("Token refresh complete", "ok");
+    } catch (err) {
+      showTerminalStatus(String(err.message || err), "error");
+    }
+  });
+  $("#btn-term-connect").addEventListener("click", connectTerminal);
+  $("#btn-term-clear").addEventListener("click", () => {
+    const term = ensureTerminal();
+    if (term) term.clear();
+  });
 
   document.querySelectorAll(".nav button[data-tab]").forEach((btn) => {
     btn.addEventListener("click", () => void setTab(btn.dataset.tab));

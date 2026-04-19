@@ -1,0 +1,3 @@
+# Refresh pi OAuth mappings daily at 12:00 AM CST (06:00 UTC)
+# Install with: crontab ops/pi_auth_daily.cron
+0 6 * * * /usr/bin/python3 /opt/ai-router/pi_auth.py --env-file /opt/ai-router/.env >> /var/log/ai-router/pi-auth.log 2>&1

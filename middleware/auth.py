@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
@@ -24,6 +25,46 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .db import Conversation, GatewayApiToken, Session, SessionLocal, User
+
+# ── Login rate limiting (in-memory, per IP) ───────────────────────────────────
+# Allows 10 attempts per 60s window. After 10 cumulative failures the IP must
+# wait (failures_past_10 * 60) seconds before each subsequent attempt.
+
+_login_state: dict[str, dict] = {}
+
+
+def _check_login_rate(ip: str) -> None:
+    now = time.monotonic()
+    s = _login_state.setdefault(ip, {
+        "window_start": now, "attempts": 0,
+        "failures": 0, "penalty_until": 0.0,
+    })
+    if now < s["penalty_until"]:
+        wait = int(s["penalty_until"] - now)
+        raise HTTPException(status_code=429, detail=f"Too many failed attempts. Retry in {wait}s.")
+    if now - s["window_start"] > 60:
+        s["window_start"] = now
+        s["attempts"] = 0
+    if s["attempts"] >= 10:
+        raise HTTPException(status_code=429, detail="Rate limit: 10 login attempts per minute.")
+    s["attempts"] += 1
+
+
+def _on_login_failure(ip: str) -> None:
+    s = _login_state.setdefault(ip, {
+        "window_start": time.monotonic(), "attempts": 0,
+        "failures": 0, "penalty_until": 0.0,
+    })
+    s["failures"] += 1
+    past = max(0, s["failures"] - 10)
+    if past > 0:
+        s["penalty_until"] = time.monotonic() + past * 60
+
+
+def _on_login_success(ip: str) -> None:
+    if ip in _login_state:
+        _login_state[ip]["failures"] = 0
+        _login_state[ip]["penalty_until"] = 0.0
 
 COOKIE_NAME   = "ai_session"
 SESSION_DAYS  = int(os.getenv("SESSION_DAYS", "7"))
@@ -56,6 +97,7 @@ class UserOut(BaseModel):
     id: str
     email: str
     is_whitelisted: bool
+    is_admin: bool
 
 
 # ── Cookie helpers ────────────────────────────────────────────────────────────
@@ -128,6 +170,12 @@ async def require_whitelisted(user: User = Depends(resolve_session)) -> User:
     return user
 
 
+async def require_admin(user: User = Depends(resolve_session)) -> User:
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
 # ── Auth routes ───────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=UserOut)
@@ -144,15 +192,25 @@ async def register(creds: Credentials, db: AsyncSession = Depends(get_db)):
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    return UserOut(id=user.id, email=user.email, is_whitelisted=user.is_whitelisted)
+    return UserOut(
+        id=user.id,
+        email=user.email,
+        is_whitelisted=user.is_whitelisted,
+        is_admin=user.is_admin,
+    )
 
 
 @router.post("/login")
-async def login(creds: Credentials, response: Response, db: AsyncSession = Depends(get_db)):
+async def login(creds: Credentials, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    ip = request.client.host if request.client else "unknown"
+    _check_login_rate(ip)
+
     user = (await db.execute(select(User).where(User.email == creds.email))).scalars().first()
     if not user or not _verify(creds.password, user.password_hash):
+        _on_login_failure(ip)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    _on_login_success(ip)
     expires = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
     sess = Session(user_id=user.id, expires_at=expires)
     db.add(sess)
@@ -179,7 +237,12 @@ async def logout(
 
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(resolve_session)):
-    return UserOut(id=user.id, email=user.email, is_whitelisted=user.is_whitelisted)
+    return UserOut(
+        id=user.id,
+        email=user.email,
+        is_whitelisted=user.is_whitelisted,
+        is_admin=user.is_admin,
+    )
 
 
 # ── Conversation history routes ───────────────────────────────────────────────
