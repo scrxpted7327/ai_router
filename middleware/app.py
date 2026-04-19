@@ -447,6 +447,9 @@ async def terminal(websocket: WebSocket) -> None:
     args = _get_terminal_args(websocket.query_params.get("cmd"))
     await websocket.accept()
 
+    # Send welcome message
+    await websocket.send_json({"type": "output", "stream": "stdout", "data": "Starting pi CLI...\r\n"})
+
     try:
         proc = await asyncio.create_subprocess_exec(
             "pi",
@@ -455,6 +458,7 @@ async def terminal(websocket: WebSocket) -> None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        await websocket.send_json({"type": "output", "stream": "stdout", "data": "Process started. Type commands and press Enter.\r\n\r\n"})
     except Exception as exc:
         await websocket.send_json({"type": "error", "data": f"Failed to run pi: {exc}"})
         await websocket.close(code=1011)
