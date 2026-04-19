@@ -51,7 +51,6 @@ ENV_PATH = Path(__file__).parent.parent / ".env"
 STATIC_DASHBOARD = Path(__file__).parent / "static" / "dashboard"
 STATIC_TERMINAL = Path(__file__).parent / "static" / "terminal"
 PI_AUTH_SCRIPT = Path(__file__).parent.parent / "pi_auth.py"
-PI_ALLOWED_COMMANDS = {"login", "/login"}
 ALLOWED_CLASSIFICATIONS = {
     "",
     "heavy_reasoning",
@@ -232,11 +231,14 @@ def _policy_pick_for_task(
     return reg.get(candidates[0])
 
 
-def _normalize_terminal_subcommand(raw: str | None) -> str:
-    cmd = (raw or "/login").strip().lower()
-    if cmd in PI_ALLOWED_COMMANDS:
-        return "login"
-    raise HTTPException(status_code=400, detail="Only pi /login is allowed")
+def _get_terminal_args(raw: str | None) -> list[str]:
+    """Get pi arguments. Empty raw means interactive shell."""
+    if not raw or not raw.strip():
+        return []
+    cmd = raw.strip()
+    if cmd.startswith("/"):
+        cmd = cmd[1:]
+    return [cmd] if cmd else []
 
 
 async def _run_startup_pi_auth_check() -> None:
@@ -442,18 +444,13 @@ async def terminal(websocket: WebSocket) -> None:
         await websocket.close(code=1008)
         return
 
-    try:
-        subcommand = _normalize_terminal_subcommand(websocket.query_params.get("cmd"))
-    except HTTPException:
-        await websocket.close(code=1008)
-        return
-
+    args = _get_terminal_args(websocket.query_params.get("cmd"))
     await websocket.accept()
 
     try:
         proc = await asyncio.create_subprocess_exec(
             "pi",
-            subcommand,
+            *args,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

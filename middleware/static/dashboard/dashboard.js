@@ -656,7 +656,7 @@ function ensureTerminal() {
     },
   });
   term.open(host);
-  term.writeln("pi /login terminal ready. Press Connect to start.");
+  term.writeln("Interactive pi shell. Press Connect to start.");
   state.terminal.term = term;
   return term;
 }
@@ -691,12 +691,12 @@ function connectTerminal() {
 
   closeTerminalSocket();
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${scheme}://${window.location.host}/terminal?cmd=%2Flogin`);
+  const ws = new WebSocket(`${scheme}://${window.location.host}/terminal`);
   state.terminal.socket = ws;
 
   ws.addEventListener("open", () => {
     term.focus();
-    term.writeln("\r\n[connected] running: pi /login\r\n");
+    term.writeln("\r\n[connected] interactive pi shell\r\n");
     showTerminalStatus("Connected", "ok");
   });
 
