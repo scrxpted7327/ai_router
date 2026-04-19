@@ -7,9 +7,11 @@ Supports:
   GET  /v1/models              — model listing
   GET  /health
 
+Dashboard:  GET /  — OpenClaw-style control UI (health, models, memory, connect)
+
 Configure Cursor:  Settings → Models → Add Model
   Base URL:  http://localhost:4000/v1
-  API Key:   any string (e.g. "local")
+  API Key:   gateway Bearer token from `manage_users.py token-create`
   Model:     claude, gpt-4o, gemini, groq, free, copilot, ...
 """
 from __future__ import annotations
@@ -22,7 +24,8 @@ from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import registry as reg
 from .auth import get_db, require_whitelisted, router as auth_router
@@ -35,13 +38,26 @@ from .providers import gemini as gemini_provider
 from .providers import openai_compat
 
 ENV_PATH = Path(__file__).parent.parent / ".env"
+STATIC_DASHBOARD = Path(__file__).parent / "static" / "dashboard"
 
 log = logging.getLogger("ai_router")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
+
+def _cors_origins() -> list[str]:
+    raw = os.getenv("CORS_ORIGINS", "*").strip()
+    if raw == "*":
+        return ["*"]
+    return [o.strip() for o in raw.split(",") if o.strip()] or ["*"]
+
+
 app = FastAPI(title="Unified AI Gateway", version="2.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"],
-                   allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 app.include_router(auth_router)
@@ -59,6 +75,19 @@ async def startup() -> None:
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "models": len(reg.list_models())}
+
+
+@app.get("/")
+async def dashboard() -> FileResponse:
+    """OpenClaw-style control UI (static SPA)."""
+    return FileResponse(STATIC_DASHBOARD / "index.html")
+
+
+app.mount(
+    "/static/dashboard",
+    StaticFiles(directory=str(STATIC_DASHBOARD)),
+    name="dashboard_static",
+)
 
 
 # ── Model listing ─────────────────────────────────────────────────────────────

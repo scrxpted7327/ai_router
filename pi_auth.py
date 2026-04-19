@@ -5,16 +5,19 @@ Reads ~/.pi/agent/auth.json, refreshes expired access tokens where possible,
 and writes live tokens into .env for LiteLLM consumption.
 
 Usage:
-    python pi_auth.py            # refresh + write .env
-    python pi_auth.py --check    # status only, no writes
-    python pi_auth.py --force    # refresh all tokens even if still valid
+    python pi_auth.py                      # refresh + write ./.env
+    python pi_auth.py --env-file PATH       # write merged keys to PATH (e.g. before scp to droplet)
+    python pi_auth.py --check               # status only, no writes
+    python pi_auth.py --force               # refresh all tokens even if still valid
+
+Server workflow: run `pi login` on a trusted machine, then `python pi_auth.py --env-file .env`,
+scp `.env` to `/opt/ai-router/.env` on the droplet, `chown airouter:airouter` + `systemctl restart ai-router`.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import time
 import urllib.request
 import urllib.parse
@@ -31,7 +34,7 @@ _AUTH_SEARCH_PATHS: list[Path] = [
     Path.cwd() / ".pi" / "auth.json",
 ]
 
-ENV_PATH = Path(__file__).parent / ".env"
+_DEFAULT_ENV = Path(__file__).parent / ".env"
 
 # ── Provider → env var mapping ────────────────────────────────────────────────
 # Matches actual keys in pi-mono auth.json
@@ -170,8 +173,8 @@ def _upsert(lines: list[str], key: str, value: str) -> list[str]:
     return result
 
 
-def write_to_env(providers: dict[str, dict]) -> None:
-    lines = ENV_PATH.read_text(encoding="utf-8").splitlines() if ENV_PATH.exists() else []
+def write_to_env(providers: dict[str, dict], env_path: Path) -> None:
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
 
     written, skipped = [], []
     for provider, entry in providers.items():
@@ -188,13 +191,14 @@ def write_to_env(providers: dict[str, dict]) -> None:
         lines = _upsert(lines, mapping["env"], token)
         written.append(f"  WROTE {mapping['name']} -> {mapping['env']}")
 
-    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     for msg in written + skipped:
         print(msg)
 
     if written:
-        print(f"\nUpdated: {ENV_PATH}")
+        print(f"\nUpdated: {env_path}")
 
 
 # ── Status printer ────────────────────────────────────────────────────────────
@@ -220,7 +224,15 @@ def main() -> None:
     parser.add_argument("--check", action="store_true", help="Status only, no writes")
     parser.add_argument("--force", action="store_true", help="Refresh all tokens even if valid")
     parser.add_argument("--auth-file", type=Path, help="Override auth.json path")
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help=f"Path to .env to upsert pi keys into (default: {_DEFAULT_ENV})",
+    )
     args = parser.parse_args()
+
+    env_out = args.env_file.resolve() if args.env_file else _DEFAULT_ENV
 
     auth_path = args.auth_file or find_auth_file()
     if not auth_path:
@@ -241,7 +253,7 @@ def main() -> None:
     print_status(providers)
     print()
 
-    write_to_env(providers)
+    write_to_env(providers, env_out)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ def build_registry() -> dict[str, ModelEntry]:
     # ── Anthropic (Claude) ────────────────────────────────────────────────────
     for alias, model_id in [
         ("claude",              "claude-sonnet-4-6"),
+        ("claude-nuanced",      "claude-sonnet-4-6"),
         ("claude-sonnet",       "claude-sonnet-4-6"),
         ("claude-sonnet-4-6",   "claude-sonnet-4-6"),
         ("claude-opus",         "claude-opus-4-7"),
@@ -45,6 +46,8 @@ def build_registry() -> dict[str, ModelEntry]:
         ("o3",           "o3"),
         ("o3-mini",      "o3-mini"),
         ("codex",        "gpt-4o"),
+        ("gpt-codex",    "gpt-4o"),
+        ("gpt-5-heavy",  "gpt-4o"),
         ("gpt-5",        "gpt-4o"),   # update when gpt-5 model ID confirmed
     ]:
         reg[alias] = ModelEntry(
@@ -81,9 +84,25 @@ def build_registry() -> dict[str, ModelEntry]:
             api_key=_env("GEMINI_API_KEY"),
         )
 
+    # ── Google Antigravity (pi-mono OAuth → GEMINI_ANTIGRAVITY_KEY via pi_auth.py) ──
+    ag_key = _env("GEMINI_ANTIGRAVITY_KEY")
+    if ag_key:
+        for alias, model_id in [
+            ("antigravity",           "gemini-2.5-pro"),
+            ("antigravity-pro",       "gemini-2.5-pro"),
+            ("antigravity-flash",     "gemini-2.0-flash"),
+            ("google-antigravity",    "gemini-2.5-pro"),
+        ]:
+            reg[alias] = ModelEntry(
+                provider="gemini",
+                model_id=model_id,
+                api_key=ag_key,
+            )
+
     # ── Groq (OpenAI-compatible) ──────────────────────────────────────────────
     for alias, model_id in [
         ("groq",                    "llama-3.3-70b-versatile"),
+        ("groq-compactor",          "llama-3.3-70b-versatile"),
         ("llama",                   "llama-3.3-70b-versatile"),
         ("llama-3.3-70b",           "llama-3.3-70b-versatile"),
         ("groq/llama-3.3-70b",      "llama-3.3-70b-versatile"),
@@ -111,6 +130,7 @@ def build_registry() -> dict[str, ModelEntry]:
     # ── OpenRouter (universal fallback) ───────────────────────────────────────
     for alias, model_id in [
         ("openrouter",            "auto"),
+        ("openrouter-gateway",    "auto"),
         ("auto",                  "auto"),
         ("free",                  "mistralai/mistral-7b-instruct:free"),
         ("free-mistral",          "mistralai/mistral-7b-instruct:free"),
@@ -142,6 +162,25 @@ def build_registry() -> dict[str, ModelEntry]:
         api_key=_env("KILO_API_KEY"),
         base_url="https://api.kilo.ai/v1",
     )
+
+    # ── OpenCode ──────────────────────────────────────────────────────────────
+    if _env("OPENCODE_API_KEY"):
+        for oc_alias in ("opencode", "opencode-model"):
+            reg[oc_alias] = ModelEntry(
+                provider="openai",
+                model_id="opencode-default",
+                api_key=_env("OPENCODE_API_KEY"),
+                base_url=_env("OPENCODE_BASE_URL") or "https://api.opencode.ai/v1",
+            )
+
+    # ── OpenCode Zen / MiniMax ────────────────────────────────────────────────
+    if _env("OPENCODE_ZEN_API_KEY"):
+        reg["opencode-zen"] = ModelEntry(
+            provider="openai",
+            model_id="MiniMax-Text-01",
+            api_key=_env("OPENCODE_ZEN_API_KEY"),
+            base_url=_env("OPENCODE_ZEN_BASE_URL") or "https://api.minimaxi.chat/v1",
+        )
 
     return reg
 

@@ -1,5 +1,5 @@
 """
-Cookie-based auth with whitelist enforcement.
+Cookie-based auth with whitelist enforcement, plus optional Bearer tokens.
 
 Flow:
   POST /auth/register  → create account (not whitelisted by default)
@@ -7,10 +7,12 @@ Flow:
   POST /auth/logout    → clear cookie
   GET  /auth/me        → current user info
 
-All /v1/* routes require a valid whitelisted session.
+All /v1/* routes require a valid whitelisted session OR Authorization: Bearer <token>
+(see `python manage_users.py token-create <email>`).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -21,7 +23,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .db import Conversation, Session, SessionLocal, User
+from .db import Conversation, GatewayApiToken, Session, SessionLocal, User
 
 COOKIE_NAME   = "ai_session"
 SESSION_DAYS  = int(os.getenv("SESSION_DAYS", "7"))
@@ -76,10 +78,30 @@ def _clear_cookie(response: Response) -> None:
 
 # ── Session resolution (used by API middleware) ───────────────────────────────
 
+def _bearer_digest(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 async def resolve_session(
+    request: Request,
     session_id: str | None = Cookie(default=None, alias=COOKIE_NAME),
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    auth = request.headers.get("Authorization") or ""
+    if auth.lower().startswith("bearer "):
+        raw = auth[7:].strip()
+        if raw:
+            digest = _bearer_digest(raw)
+            row = await db.execute(
+                select(GatewayApiToken).where(GatewayApiToken.token_digest == digest)
+            )
+            tok = row.scalars().first()
+            if tok:
+                user_row = await db.get(User, tok.user_id)
+                if user_row:
+                    return user_row
+        raise HTTPException(status_code=401, detail="Invalid or unknown API token")
+
     if not session_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
 

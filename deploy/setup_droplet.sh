@@ -13,6 +13,17 @@ apt-get update -y && apt-get upgrade -y
 echo "==> Installing system deps..."
 apt-get install -y git nginx curl ufw software-properties-common
 
+echo "==> Swap (recommended for 1GB RAM)..."
+if ! swapon --show | grep -q swapfile; then
+  fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  sysctl vm.swappiness=10
+  grep -q 'vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >> /etc/sysctl.conf
+fi
+
 echo "==> Installing Python 3.13..."
 add-apt-repository ppa:deadsnakes/ppa -y
 apt-get update -y
@@ -43,12 +54,18 @@ nginx -t && systemctl enable nginx && systemctl reload nginx
 echo "==> Configuring firewall..."
 ufw allow OpenSSH
 ufw allow 'Nginx HTTP'
+ufw allow 'Nginx HTTPS'
 ufw --force enable
+
+chmod +x "$APP_DIR/deploy/certbot-init.sh" "$APP_DIR/deploy/backup-gateway-db.sh" "$APP_DIR/deploy/healthcheck.sh" 2>/dev/null || true
 
 echo ""
 echo "======================================"
 echo "Bootstrap complete."
-echo "ONE STEP REMAINING:"
-echo "  scp .env root@\$(hostname -I | awk '{print \$1}'):/opt/ai-router/.env"
-echo "  systemctl start ai-router"
+echo "NEXT:"
+echo "  1. scp deploy/env.production to /opt/ai-router/.env (set COOKIE_SECRET, CORS_ORIGINS, keys)"
+echo "  2. systemctl start ai-router"
+echo "  3. Point Cloudflare A record to this droplet; then TLS:"
+echo "       sudo bash $APP_DIR/deploy/certbot-init.sh your.domain.com"
+echo "  4. (optional) crontab: 0 3 * * * $APP_DIR/deploy/backup-gateway-db.sh"
 echo "======================================"

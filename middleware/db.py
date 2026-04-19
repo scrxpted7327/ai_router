@@ -34,6 +34,21 @@ class User(Base):
 
     sessions      = relationship("Session", back_populates="user", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
+    gateway_tokens = relationship("GatewayApiToken", back_populates="user", cascade="all, delete-orphan")
+
+
+class GatewayApiToken(Base):
+    """SHA-256 digest of Bearer token for /v1/* (mobile, IDEs, curl without cookies)."""
+
+    __tablename__ = "gateway_api_tokens"
+
+    id           = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id      = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    label        = Column(String, default="default")
+    token_digest = Column(String(64), unique=True, nullable=False, index=True)
+    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", back_populates="gateway_tokens")
 
 
 class Session(Base):

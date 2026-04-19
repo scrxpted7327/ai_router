@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Router — Control</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/dashboard/dashboard.css" />
+  </head>
+  <body>
+    <div
+      id="boot"
+      class="auth-gate"
+      style="position: fixed; inset: 0; z-index: 100; background: var(--bg-deep)"
+    >
+      <div class="auth-card" style="text-align: center">
+        <div class="brand-mark" style="margin: 0 auto 1rem">⌁</div>
+        <p style="margin: 0; color: var(--text-muted)">Loading control plane…</p>
+      </div>
+    </div>
+    <div id="view-gate" class="auth-gate hidden">
+      <div class="auth-card">
+        <h1>AI Router</h1>
+        <p class="lead">
+          Control plane for your OpenAI-compatible gateway. Sign in to view memory
+          and account status; model listing is public.
+        </p>
+        <div class="btn-row" style="margin-bottom: 1.25rem">
+          <button type="button" class="btn btn-primary" id="gate-show-login">
+            Sign in
+          </button>
+          <button type="button" class="btn" id="gate-show-register">
+            Register
+          </button>
+        </div>
+        <form id="form-login">
+          <label for="login-email">Email</label>
+          <input
+            id="login-email"
+            type="email"
+            autocomplete="username"
+            required
+          />
+          <label for="login-password">Password</label>
+          <input
+            id="login-password"
+            type="password"
+            autocomplete="current-password"
+            required
+          />
+          <div class="btn-row">
+            <button type="submit" class="btn btn-primary">Sign in</button>
+          </div>
+        </form>
+        <form id="form-register" class="hidden">
+          <label for="reg-email">Email</label>
+          <input id="reg-email" type="email" autocomplete="email" required />
+          <label for="reg-password">Password</label>
+          <input
+            id="reg-password"
+            type="password"
+            autocomplete="new-password"
+            required
+          />
+          <div class="btn-row">
+            <button type="submit" class="btn btn-primary">Create account</button>
+          </div>
+        </form>
+        <div id="gate-msg" class="msg hidden"></div>
+      </div>
+    </div>
+
+    <div id="view-app" class="app hidden">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">⌁</div>
+          <div class="brand-text">
+            <strong>AI Router</strong>
+            <span>Control</span>
+          </div>
+        </div>
+        <nav class="nav">
+          <button type="button" data-tab="overview" class="active">
+            <span class="nav-ico">◆</span> Overview
+          </button>
+          <button type="button" data-tab="models">
+            <span class="nav-ico">◇</span> Models
+          </button>
+          <button type="button" data-tab="memory">
+            <span class="nav-ico">▤</span> Memory
+          </button>
+          <button type="button" data-tab="connect">
+            <span class="nav-ico">⎘</span> Connect
+          </button>
+        </nav>
+        <div class="sidebar-footer">
+          OpenAI-compatible surface at <code>/v1</code>. Bearer tokens for
+          non-browser clients via <code>manage_users.py token-create</code>.
+        </div>
+      </aside>
+      <main class="main">
+        <div class="topbar">
+          <h1 id="panel-title">Overview</h1>
+          <div class="user-chip">
+            <span id="user-pill" class="pill">—</span>
+            <span id="dash-email" style="font-size: 0.85rem; color: var(--text-muted)"
+              >—</span
+            >
+            <button type="button" class="btn" id="btn-logout">Log out</button>
+          </div>
+        </div>
+
+        <section data-panel="overview">
+          <div class="grid-stats">
+            <div class="card">
+              <h3>Gateway</h3>
+              <div id="stat-status" class="value">—</div>
+              <div class="sub">from <code>GET /health</code></div>
+            </div>
+            <div class="card">
+              <h3>Models registered</h3>
+              <div id="stat-models" class="value">—</div>
+              <div class="sub">registry size</div>
+            </div>
+            <div class="card">
+              <h3>Signed in</h3>
+              <div id="stat-user" class="value" style="font-size: 0.95rem">
+                —
+              </div>
+              <div class="sub">session cookie</div>
+            </div>
+          </div>
+          <div class="panel">
+            <h2>Quick links</h2>
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin: 0">
+              <a href="/docs" style="color: var(--accent)">OpenAPI /docs</a>
+              ·
+              <a href="/health" style="color: var(--accent)">/health</a>
+              ·
+              <a href="/v1/models" style="color: var(--accent)">/v1/models</a>
+            </p>
+          </div>
+        </section>
+
+        <section data-panel="models" class="hidden">
+          <div class="panel">
+            <h2>Available models</h2>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Model id</th>
+                    <th>Owned by</th>
+                  </tr>
+                </thead>
+                <tbody id="models-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section data-panel="memory" class="hidden">
+          <div class="panel memory-layout">
+            <div>
+              <h2 style="margin-top: 0">Conversations</h2>
+              <div
+                id="conv-list"
+                style="
+                  border: 1px solid var(--border);
+                  border-radius: 10px;
+                  overflow: hidden;
+                  min-height: 120px;
+                "
+              ></div>
+            </div>
+            <div>
+              <h2 style="margin-top: 0">Detail</h2>
+              <div id="conv-detail"></div>
+            </div>
+          </div>
+        </section>
+
+        <section data-panel="connect" class="hidden">
+          <div class="panel">
+            <h2>Cursor &amp; API clients</h2>
+            <p style="color: var(--text-muted); font-size: 0.9rem">
+              Use your gateway token (<code>air_…</code>) as the API key. Create
+              tokens on the server with
+              <code>manage_users.py token-create</code>.
+            </p>
+            <p style="font-size: 0.85rem; color: var(--text-muted)">
+              Base URL (OpenAI-compatible):
+            </p>
+            <div id="connect-base" class="help-pre"></div>
+            <p
+              style="
+                margin-top: 1rem;
+                font-size: 0.85rem;
+                color: var(--text-muted);
+              "
+            >
+              Example:
+            </p>
+            <div id="connect-curl" class="help-pre"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/dashboard/dashboard.js" defer></script>
+    <script>
+      document.getElementById("gate-show-login").addEventListener("click", () => {
+        document.getElementById("form-login").classList.remove("hidden");
+        document.getElementById("form-register").classList.add("hidden");
+      });
+      document
+        .getElementById("gate-show-register")
+        .addEventListener("click", () => {
+          document.getElementById("form-register").classList.remove("hidden");
+          document.getElementById("form-login").classList.add("hidden");
+        });
+    </script>
+  </body>
+</html>

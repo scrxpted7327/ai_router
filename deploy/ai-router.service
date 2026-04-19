@@ -7,7 +7,8 @@ User=airouter
 Group=airouter
 WorkingDirectory=/opt/ai-router
 EnvironmentFile=/opt/ai-router/.env
-ExecStart=/opt/ai-router/.venv/bin/uvicorn middleware.app:app --host 127.0.0.1 --port 4000 --workers 2
+# Single worker on 1GB droplets; increase if you add RAM.
+ExecStart=/opt/ai-router/.venv/bin/uvicorn middleware.app:app --host 127.0.0.1 --port 4000 --workers 1
 Restart=always
 RestartSec=5
 StandardOutput=journal

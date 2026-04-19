@@ -7,8 +7,13 @@ Usage:
     python manage_users.py whitelist <email>
     python manage_users.py revoke <email>
     python manage_users.py delete <email>
+    python manage_users.py token-create <email> [label]
+    python manage_users.py token-list <email>
+    python manage_users.py token-revoke <email>
 """
 import asyncio
+import hashlib
+import secrets
 import sys
 from pathlib import Path
 
@@ -21,7 +26,7 @@ for line in (Path(__file__).parent / ".env").read_text(encoding="utf-8").splitli
         if v and "REPLACE_ME" not in v:
             os.environ.setdefault(k.strip(), v.strip())
 
-from middleware.db import User, init_db, SessionLocal
+from middleware.db import GatewayApiToken, User, init_db, SessionLocal
 from middleware.auth import _hash
 from sqlalchemy import select
 
@@ -83,6 +88,50 @@ async def cmd_delete(email: str):
     print(f"Deleted: {email}")
 
 
+async def cmd_token_create(email: str, label: str = "default"):
+    raw = f"air_{secrets.token_urlsafe(32)}"
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    async with SessionLocal() as db:
+        user = (await db.execute(select(User).where(User.email == email))).scalars().first()
+        if not user:
+            print(f"ERROR: {email} not found")
+            return
+        db.add(GatewayApiToken(user_id=user.id, label=label, token_digest=digest))
+        await db.commit()
+    print(f"Bearer token for {email} (save once; cannot be shown again):\n{raw}")
+
+
+async def cmd_token_list(email: str):
+    async with SessionLocal() as db:
+        user = (await db.execute(select(User).where(User.email == email))).scalars().first()
+        if not user:
+            print(f"ERROR: {email} not found")
+            return
+        rows = (await db.execute(
+            select(GatewayApiToken).where(GatewayApiToken.user_id == user.id)
+        )).scalars().all()
+    if not rows:
+        print("No gateway API tokens.")
+        return
+    for r in rows:
+        print(f"  {r.id}  label={r.label!r}  created={r.created_at}")
+
+
+async def cmd_token_revoke(email: str):
+    async with SessionLocal() as db:
+        user = (await db.execute(select(User).where(User.email == email))).scalars().first()
+        if not user:
+            print(f"ERROR: {email} not found")
+            return
+        rows = (await db.execute(
+            select(GatewayApiToken).where(GatewayApiToken.user_id == user.id)
+        )).scalars().all()
+        for r in rows:
+            await db.delete(r)
+        await db.commit()
+    print(f"Removed {len(rows)} gateway API token(s) for {email}")
+
+
 async def main():
     await init_db()
     args = sys.argv[1:]
@@ -101,6 +150,12 @@ async def main():
         await cmd_revoke(args[1])
     elif cmd == "delete" and len(args) == 2:
         await cmd_delete(args[1])
+    elif cmd == "token-create" and len(args) in (2, 3):
+        await cmd_token_create(args[1], args[2] if len(args) == 3 else "default")
+    elif cmd == "token-list" and len(args) == 2:
+        await cmd_token_list(args[1])
+    elif cmd == "token-revoke" and len(args) == 2:
+        await cmd_token_revoke(args[1])
     else:
         print(__doc__)
 
