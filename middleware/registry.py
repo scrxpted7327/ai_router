@@ -1275,8 +1275,27 @@ def _copilot_pi_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | 
         CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7",          "Claude Opus 4.7 (Copilot PI)",   ("copilot-pi-opus",),     True,  True, 200_000, 32_000),
         CatalogModel(provider.id, provider.api, provider.label, "claude-haiku-4-5-20251001","Claude Haiku 4.5 (Copilot PI)",  ("copilot-pi-haiku",),    False, True, 200_000,  8_192),
         CatalogModel(provider.id, provider.api, provider.label, "gpt-4o",                   "GPT-4o (Copilot PI)",            ("copilot-pi-gpt4o",),    False, True, 128_000, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.3-codex",            "GPT-5.3 Codex (Copilot PI)",     ("copilot-pi-codex",),    True,  True, 1_000_000, 100_000),
         CatalogModel(provider.id, provider.api, provider.label, "o3",                       "o3 (Copilot PI)",                ("copilot-pi-o3",),       True,  False, 200_000, 100_000),
         CatalogModel(provider.id, provider.api, provider.label, "o4-mini",                  "o4-mini (Copilot PI)",           ("copilot-pi-o4-mini",),  True,  False, 200_000, 100_000),
+    )
+    return provider, models
+
+
+def _google_antigravity_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    """Google Antigravity models accessed via `pi --model <id> <prompt>`."""
+    provider = ProviderConfig(
+        id="google-antigravity",
+        api="pi_cli",
+        label="google-antigravity",
+        env_keys=(),
+    )
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7",         "Claude Opus 4.7 (Antigravity)",       ("antigravity-opus",),         True,  True,  200_000,   32_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-3.1-pro-preview",  "Gemini 3.1 Pro Preview (Antigravity)",("antigravity-gemini-3.1-pro",),True,  True,  1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-3-pro-preview",    "Gemini 3 Pro Preview (Antigravity)",  ("antigravity-gemini-3-pro",), True,  True,  1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-3-flash-preview",  "Gemini 3 Flash Preview (Antigravity)",("antigravity-gemini-3-flash",),False, True,  1_048_576,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-pro",          "Gemini 2.5 Pro (Antigravity)",        ("antigravity-gemini-pro",),   True,  True,  1_048_576, 65_536),
     )
     return provider, models
 
@@ -1284,6 +1303,12 @@ def _copilot_pi_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | 
 def _provider_specs() -> list[tuple[ProviderConfig, tuple[CatalogModel, ...]]]:
     providers = []
     for builder in (
+        # pi_cli providers first — API providers registered after will win canonical lookups
+        _gemini_cli_provider,
+        _openai_codex_provider,
+        _copilot_pi_provider,
+        _google_antigravity_provider,
+        # API providers (canonical entries)
         _auto_routing_provider,
         _anthropic_provider,
         _openai_provider,
@@ -1303,9 +1328,6 @@ def _provider_specs() -> list[tuple[ProviderConfig, tuple[CatalogModel, ...]]]:
         _kilo_provider,
         _opencode_provider,
         _bedrock_provider,
-        _gemini_cli_provider,
-        _openai_codex_provider,
-        _copilot_pi_provider,
     ):
         spec = builder()
         if spec:

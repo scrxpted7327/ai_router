@@ -987,18 +987,18 @@ async def _auto_route_model(
         "fast_simple":     ["minimax-free", "trinity-free", "nemotron-free"],
     }
     AUTO_PREMIUM_ROUTES = {
-        "heavy_reasoning": ["claude-sonnet-4-6", "gpt-5.3-codex", "deepseek-r1-groq"],
-        "code_generation": ["gpt-5.3-codex", "claude-sonnet-4-6", "opencode-o3"],
-        "nuanced_coding":  ["claude-sonnet-4-6", "gpt-5.3-codex", "deepseek-r1-groq"],
-        "multimodal":      ["gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro"],
-        "fast_simple":     ["zen-haiku", "claude-haiku", "cerebras-fast"],
+        "heavy_reasoning": ["github-copilot-pi/claude-sonnet-4-6", "openai-codex/gpt-5.3-codex", "deepseek-r1-groq"],
+        "code_generation": ["openai-codex/gpt-5.3-codex", "github-copilot-pi/gpt-5.3-codex", "github-copilot-pi/claude-sonnet-4-6"],
+        "nuanced_coding":  ["github-copilot-pi/claude-sonnet-4-6", "openai-codex/gpt-5.3-codex", "deepseek-r1-groq"],
+        "multimodal":      ["google-antigravity/gemini-3-pro-preview", "google-gemini-cli/gemini-3-pro-preview", "google-gemini-cli/gemini-3-flash-preview"],
+        "fast_simple":     ["github-copilot-pi/claude-haiku-4-5-20251001", "zen-haiku", "cerebras-fast"],
     }
     AUTO_MAX_ROUTES = {
-        "heavy_reasoning": ["claude-opus-4-7", "claude-sonnet-4-6", "gpt-5.4"],
-        "code_generation": ["claude-opus-4-7", "gpt-5.4", "claude-sonnet-4-6"],
-        "nuanced_coding":  ["claude-opus-4-7", "claude-sonnet-4-6", "gpt-5.4"],
-        "multimodal":      ["gemini-3.1-pro-preview", "claude-opus-4-7", "gpt-5.4"],
-        "fast_simple":     ["claude-sonnet-4-6", "claude-opus-4-7", "gpt-5.4"],
+        "heavy_reasoning": ["github-copilot-pi/claude-opus-4-7", "google-antigravity/claude-opus-4-7", "openai-codex/gpt-5.4"],
+        "code_generation": ["github-copilot-pi/claude-opus-4-7", "openai-codex/gpt-5.4", "github-copilot-pi/claude-sonnet-4-6"],
+        "nuanced_coding":  ["github-copilot-pi/claude-opus-4-7", "github-copilot-pi/claude-sonnet-4-6", "openai-codex/gpt-5.4"],
+        "multimodal":      ["google-antigravity/gemini-3.1-pro-preview", "google-gemini-cli/gemini-3.1-pro-preview", "github-copilot-pi/claude-opus-4-7"],
+        "fast_simple":     ["github-copilot-pi/claude-sonnet-4-6", "github-copilot-pi/claude-opus-4-7", "openai-codex/gpt-5.4"],
     }
 
     routes_map = {
@@ -1075,7 +1075,7 @@ async def _auto_route_model(
                                 asyncio.create_task(_log_route_analytics(
                                     user.id, requested, task_type, entry.model_id, entry.provider_id, tier, False, idx,
                                 ))
-                            return entry.model_id
+                            return f"{entry.provider_id}/{entry.model_id}"
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -1092,7 +1092,7 @@ async def _auto_route_model(
                 asyncio.create_task(_log_route_analytics(
                     user.id, requested, task_type, entry.model_id, entry.provider_id, tier, False, idx,
                 ))
-            return entry.model_id
+            return f"{entry.provider_id}/{entry.model_id}"
     return None
 
 
