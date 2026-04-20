@@ -1454,7 +1454,6 @@ def get_from_provider(provider_id: str, model_id: str) -> ModelEntry | None:
 
 def list_models() -> list[dict]:
     out: list[dict] = []
-    seen: set[str] = set()
     for model_id, entry in sorted(REGISTRY.by_canonical_id.items(), key=lambda item: item[0]):
         provider_entries = REGISTRY.entries_for_model.get(model_id, [entry])
         out.append(
@@ -1470,7 +1469,6 @@ def list_models() -> list[dict]:
                 "context_window": entry.context_window,
                 "max_tokens": entry.max_tokens,
                 "aliases": list(entry.aliases),
-                "primary": True,
                 "providers": [pe.provider_id for pe in provider_entries],
                 "provider_entries": [
                     {
@@ -1479,38 +1477,6 @@ def list_models() -> list[dict]:
                         "capabilities": pe.capabilities.as_dict(),
                     }
                     for pe in provider_entries
-                ],
-            }
-        )
-        seen.add(f"{entry.provider_id}:{model_id}")
-    for key, entry in sorted(REGISTRY.by_provider_model.items(), key=lambda item: item[0]):
-        if key in seen:
-            continue
-        provider_id, _, bare_model_id = key.partition(":")
-        if bare_model_id in REGISTRY.by_canonical_id and provider_id == REGISTRY.by_canonical_id[bare_model_id].provider_id:
-            continue
-        seen.add(key)
-        out.append(
-            {
-                "id": f"{provider_id}/{bare_model_id}",
-                "object": "model",
-                "owned_by": entry.provider_label or entry.provider_id or entry.provider,
-                "provider_api": entry.provider,
-                "provider_id": entry.provider_id or entry.provider,
-                "name": entry.name,
-                "reasoning": entry.reasoning,
-                "vision": entry.vision,
-                "context_window": entry.context_window,
-                "max_tokens": entry.max_tokens,
-                "aliases": list(entry.aliases),
-                "primary": False,
-                "providers": [provider_id],
-                "provider_entries": [
-                    {
-                        "provider_id": provider_id,
-                        "provider_label": entry.provider_label or provider_id,
-                        "capabilities": entry.capabilities.as_dict(),
-                    }
                 ],
             }
         )

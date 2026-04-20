@@ -733,14 +733,21 @@ function renderModels() {
   const data = state.models?.data;
   if (!data?.length) {
     body.innerHTML =
-      '<tr><td colspan="2" class="empty">No models returned.</td></tr>';
+      '<tr><td colspan="4" class="empty">No models returned.</td></tr>';
     return;
   }
   for (const m of data) {
+    const providerEntries = m.provider_entries || [];
+    const providerBadges = providerEntries
+      .map((p) => `<span class="provider-badge">${escapeHtml(p.provider_label || p.provider_id)}</span>`)
+      .join(" ");
+    const ctx = m.context_window >= 1_000_000
+      ? `${Math.round(m.context_window / 1_000_000)}M`
+      : m.context_window >= 1_000
+      ? `${Math.round(m.context_window / 1_000)}k`
+      : String(m.context_window || "-");
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td class="mono">${escapeHtml(m.id)}</td><td>${escapeHtml(
-      m.owned_by || "-"
-    )}</td>`;
+    tr.innerHTML = `<td class="mono">${escapeHtml(m.id)}</td><td>${escapeHtml(m.name || "-")}</td><td>${providerBadges}</td><td class="mono" style="white-space:nowrap">${ctx}</td>`;
     body.appendChild(tr);
   }
 }
