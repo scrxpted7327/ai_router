@@ -1059,9 +1059,10 @@ def _opencode_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | No
         CatalogModel(provider.id, provider.api, provider.label, "gemini-3-flash", "Gemini 3 Flash", ("zen-gemini-flash",), False, True, 1_048_576, 32_768),
         CatalogModel(provider.id, provider.api, provider.label, "glm-5.1", "GLM-5.1", ("zen-glm-5",), False, False, 128_000, 4_096),
         CatalogModel(provider.id, provider.api, provider.label, "kimi-k2.5", "Kimi K2.5", ("zen-kimi",), False, False, 200_000, 8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "minimax-m2.5-free", "MiniMax M2.5 (free)", ("zen-free", "minimax-free"), False, False, 1_000_000, 8_192),
-        CatalogModel(provider.id, provider.api, provider.label, "nemotron-3-super-free", "Nemotron 3 Super (free)", ("nemotron-free",), True, False, 131_072, 16_384),
-        CatalogModel(provider.id, provider.api, provider.label, "qwen3.6-plus-free", "Qwen 3.6 Plus (free)", ("qwen-zen-free",), False, False, 131_072, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "minimax-m2.5-free",   "MiniMax M2.5 (free)",        ("zen-free", "minimax-free"), False, False, 1_000_000, 8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "nemotron-3-super-free","Nemotron 3 Super (free)",    ("nemotron-free",),           True,  False, 131_072,   16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "trinity-large-free",   "Trinity Large (free)",       ("trinity-free",),            False, False, 131_072,   8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "qwen3.6-plus-free",    "Qwen 3.6 Plus (free)",       ("qwen-zen-free",),           False, False, 131_072,   8_192),
     )
     return provider, models
 

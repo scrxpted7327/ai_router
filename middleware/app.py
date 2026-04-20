@@ -43,7 +43,8 @@ from .db import (
     RouteAnalytics, Session, SessionLocal, User, UserRoutingPreference, init_db,
 )
 from .format_adapter import normalise_request, stream_as_responses_api
-from .router import route
+from .router import route, TaskType, _ROUTES
+from .providers import ProviderRateLimitError
 from .providers import anthropic as anthropic_provider
 from .providers import bedrock as bedrock_provider
 from .providers import gemini as gemini_provider
@@ -972,32 +973,32 @@ async def _auto_route_model(
 ) -> str | None:
     """Route auto-light/free/premium/max to actual models based on task classification."""
     AUTO_LIGHT_ROUTES = {
-        "heavy_reasoning": ["llama-3.1-8b-instant", "llama3-8b-8192", "free-llama"],
-        "code_generation": ["llama-3.1-8b-instant", "llama3-8b-8192", "free-llama"],
-        "nuanced_coding":  ["llama-3.1-8b-instant", "llama3-8b-8192", "free-llama"],
-        "multimodal":      ["llama-3.2-11b-vision-preview", "free-gemma", "free-llama"],
-        "fast_simple":     ["llama-3.1-8b-instant", "glm-flash", "free-llama"],
+        "heavy_reasoning": ["qwq-groq", "deepseek-r1-groq", "llama-3.3-70b"],
+        "code_generation": ["kimi-groq", "llama-3.3-70b", "qwen3-groq"],
+        "nuanced_coding":  ["llama-3.3-70b", "kimi-groq", "qwen3-groq"],
+        "multimodal":      ["llama-4-maverick-groq", "llama-3.2-90b-groq", "llama-3.2-11b-groq"],
+        "fast_simple":     ["llama-fast", "gemma2-groq", "llama3.1-8b-cerebras"],
     }
     AUTO_FREE_ROUTES = {
-        "heavy_reasoning": ["deepseek-r1", "qwq-groq", "free"],
-        "code_generation": ["deepseek-chat", "qwen", "free"],
-        "nuanced_coding": ["deepseek-chat", "qwen", "free"],
-        "multimodal": ["llama-3.2-90b-groq", "free-gemma", "free"],
-        "fast_simple": ["glm-flash", "free-llama", "free"],
+        "heavy_reasoning": ["big-pickle", "nemotron-free", "deepseek-r1-groq"],
+        "code_generation": ["big-pickle", "nemotron-free", "minimax-free"],
+        "nuanced_coding":  ["big-pickle", "minimax-free", "nemotron-free"],
+        "multimodal":      ["minimax-free", "free-gemma", "big-pickle"],
+        "fast_simple":     ["minimax-free", "trinity-free", "nemotron-free"],
     }
     AUTO_PREMIUM_ROUTES = {
-        "heavy_reasoning": ["claude-opus", "o3", "deepseek-r1"],
-        "code_generation": ["claude-sonnet", "gpt-4.1", "deepseek-chat"],
-        "nuanced_coding": ["claude-sonnet", "gpt-4.1", "gemini-pro"],
-        "multimodal": ["gemini-pro", "claude-opus", "gpt-4.1"],
-        "fast_simple": ["claude-haiku", "gemini-flash", "cerebras"],
+        "heavy_reasoning": ["claude-sonnet-4-6", "gpt-5.3-codex", "deepseek-r1-groq"],
+        "code_generation": ["gpt-5.3-codex", "claude-sonnet-4-6", "opencode-o3"],
+        "nuanced_coding":  ["claude-sonnet-4-6", "gpt-5.3-codex", "deepseek-r1-groq"],
+        "multimodal":      ["gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro"],
+        "fast_simple":     ["zen-haiku", "claude-haiku", "cerebras-fast"],
     }
     AUTO_MAX_ROUTES = {
-        "heavy_reasoning": ["claude-opus-4-7", "o3", "gpt-5"],
-        "code_generation": ["claude-opus-4-7", "gpt-4.1", "o3"],
-        "nuanced_coding": ["claude-opus-4-7", "claude-sonnet-4-6", "gpt-4.1"],
-        "multimodal": ["gemini-2.5-pro", "claude-opus-4-7", "gpt-4.1"],
-        "fast_simple": ["claude-sonnet-4-6", "gpt-4.1", "gemini-2.5-flash"],
+        "heavy_reasoning": ["claude-opus-4-7", "claude-sonnet-4-6", "gpt-5.4"],
+        "code_generation": ["claude-opus-4-7", "gpt-5.4", "claude-sonnet-4-6"],
+        "nuanced_coding":  ["claude-opus-4-7", "claude-sonnet-4-6", "gpt-5.4"],
+        "multimodal":      ["gemini-3.1-pro-preview", "claude-opus-4-7", "gpt-5.4"],
+        "fast_simple":     ["claude-sonnet-4-6", "claude-opus-4-7", "gpt-5.4"],
     }
 
     routes_map = {
@@ -1166,48 +1167,117 @@ async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
         raise HTTPException(status_code=401,
                             detail=f"No API key for '{entry.provider}'. Run `python pi_auth.py`.")
 
-    # 4. Dispatch to provider
-    if do_stream:
-        raw_stream = _stream(entry, body)
-        if is_responses_api:
-            raw_stream = stream_as_responses_api(raw_stream, entry.model_id)
-        return StreamingResponse(raw_stream, media_type="text/event-stream",
-                                 headers={"Cache-Control": "no-cache",
-                                          "X-Accel-Buffering": "no"})
-    else:
-        result = await _complete(entry, body)
-        return Response(content=json.dumps(result), media_type="application/json")
+    # 4. Dispatch with automatic rate-limit fallback
+    task_type_str = locals().get("task_type") or getattr(route(messages).task_type, "value", "nuanced_coding")
+    tried_models: set[str] = {entry.model_id}
+
+    for _attempt in range(4):  # up to 3 fallbacks
+        try:
+            if do_stream:
+                return await _try_stream(entry, body, is_responses_api)
+            else:
+                result = await _complete(entry, body)
+                return Response(content=json.dumps(result), media_type="application/json")
+        except ProviderRateLimitError:
+            tried_models.add(entry.model_id)
+            log.warning("Rate limit on %s (attempt %d), switching model", entry.model_id, _attempt + 1)
+            next_entry = _rl_fallback(task_type_str, enabled, tried_models)
+            if not next_entry:
+                raise HTTPException(status_code=429,
+                                    detail="All candidate models are rate-limited. Try again later.")
+            log.info("Rate-limit fallback: %s → %s", entry.model_id, next_entry.model_id)
+            entry = next_entry
+
+    raise HTTPException(status_code=429, detail="All candidate models are rate-limited.")
+
+
+def _rl_fallback(task_type: str, enabled: set[str], tried: set[str]) -> reg.ModelEntry | None:
+    """Return the next untried model for the given task type using the router's fallback chain."""
+    try:
+        decision = _ROUTES[TaskType(task_type)]
+    except (ValueError, KeyError):
+        return None
+    for model_id in [decision.primary, *decision.fallbacks]:
+        if model_id in tried:
+            continue
+        entry = reg.get(model_id)
+        if entry and entry.model_id in enabled and entry.model_id not in tried:
+            return entry
+    return None
+
+
+async def _try_stream(entry: reg.ModelEntry, body: dict, is_responses_api: bool) -> Response:
+    """Begin streaming, eagerly fetching the first chunk to surface rate-limit errors early."""
+    gen = _stream(entry, body)
+    try:
+        first_chunk = await gen.__anext__()
+    except StopAsyncIteration:
+        first_chunk = None
+
+    async def _combined() -> AsyncIterator[str]:
+        if first_chunk is not None:
+            yield first_chunk
+        async for chunk in gen:
+            yield chunk
+
+    raw_stream: AsyncIterator[str] = _combined()
+    if is_responses_api:
+        raw_stream = stream_as_responses_api(raw_stream, entry.model_id)
+    return StreamingResponse(raw_stream, media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 async def _complete(entry: reg.ModelEntry, body: dict) -> dict:
-    if entry.provider == "anthropic":
-        return await anthropic_provider.chat(entry.model_id, body, entry.api_key)
-    if entry.provider == "gemini":
-        return await gemini_provider.chat(entry.model_id, body, entry.api_key)
-    if entry.provider == "bedrock":
-        return await bedrock_provider.chat(entry.model_id, body, entry.options)
-    if entry.provider == "pi_cli":
-        return await pi_cli_provider.chat(entry.model_id, body)
-    return await openai_compat.chat(
-        entry.model_id, body, entry.api_key, entry.base_url, entry.extra_headers
-    )
+    try:
+        if entry.provider == "anthropic":
+            return await anthropic_provider.chat(entry.model_id, body, entry.api_key)
+        if entry.provider == "gemini":
+            return await gemini_provider.chat(entry.model_id, body, entry.api_key)
+        if entry.provider == "bedrock":
+            return await bedrock_provider.chat(entry.model_id, body, entry.options)
+        if entry.provider == "pi_cli":
+            return await pi_cli_provider.chat(entry.model_id, body)
+        return await openai_compat.chat(
+            entry.model_id, body, entry.api_key, entry.base_url, entry.extra_headers
+        )
+    except Exception as exc:
+        _maybe_raise_rl(exc)
+        raise
 
 
 async def _stream(entry: reg.ModelEntry, body: dict) -> AsyncIterator[str]:
-    if entry.provider == "anthropic":
-        async for chunk in anthropic_provider.stream(entry.model_id, body, entry.api_key):
-            yield chunk
-    elif entry.provider == "gemini":
-        async for chunk in gemini_provider.stream(entry.model_id, body, entry.api_key):
-            yield chunk
-    elif entry.provider == "bedrock":
-        async for chunk in bedrock_provider.stream(entry.model_id, body, entry.options):
-            yield chunk
-    elif entry.provider == "pi_cli":
-        async for chunk in pi_cli_provider.stream(entry.model_id, body):
-            yield chunk
-    else:
-        async for chunk in openai_compat.stream(
-            entry.model_id, body, entry.api_key, entry.base_url, entry.extra_headers
-        ):
-            yield chunk
+    try:
+        if entry.provider == "anthropic":
+            async for chunk in anthropic_provider.stream(entry.model_id, body, entry.api_key):
+                yield chunk
+        elif entry.provider == "gemini":
+            async for chunk in gemini_provider.stream(entry.model_id, body, entry.api_key):
+                yield chunk
+        elif entry.provider == "bedrock":
+            async for chunk in bedrock_provider.stream(entry.model_id, body, entry.options):
+                yield chunk
+        elif entry.provider == "pi_cli":
+            async for chunk in pi_cli_provider.stream(entry.model_id, body):
+                yield chunk
+        else:
+            async for chunk in openai_compat.stream(
+                entry.model_id, body, entry.api_key, entry.base_url, entry.extra_headers
+            ):
+                yield chunk
+    except Exception as exc:
+        _maybe_raise_rl(exc)
+        raise
+
+
+def _maybe_raise_rl(exc: Exception) -> None:
+    """Convert provider-specific rate-limit exceptions to ProviderRateLimitError."""
+    name = type(exc).__name__
+    msg = str(exc)
+    if (
+        "RateLimitError" in name
+        or "ResourceExhausted" in name
+        or "429" in msg
+        or "rate limit" in msg.lower()
+        or "too many requests" in msg.lower()
+    ):
+        raise ProviderRateLimitError(msg) from exc
