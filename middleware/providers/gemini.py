@@ -73,6 +73,20 @@ def _convert_tools(tools: list[dict]) -> list[types.Tool] | None:
     return [types.Tool(function_declarations=declarations)] if declarations else None
 
 
+def _build_thinking_config(body: dict) -> types.ThinkingConfig | None:
+    """Translate OpenAI-style reasoning/effort to Gemini thinking_config."""
+    effort_budget = {"low": 2_048, "medium": 8_192, "default": None, "high": 16_384, "xhigh": 32_768}
+    thinking = body.get("thinking")
+    if thinking and isinstance(thinking, dict):
+        budget = thinking.get("budget_tokens")
+        return types.ThinkingConfig(thinking_budget=budget)
+    effort = body.get("reasoning_effort")
+    if effort and effort != "default" and effort in effort_budget:
+        budget = effort_budget[effort]
+        return types.ThinkingConfig(thinking_budget=budget)
+    return None
+
+
 async def chat(model_id: str, body: dict, api_key: str) -> dict:
     client = _client(api_key)
     system, contents = _convert_messages(body.get("messages", []))
@@ -85,6 +99,9 @@ async def chat(model_id: str, body: dict, api_key: str) -> dict:
         config_kwargs["system_instruction"] = system
     if tools:
         config_kwargs["tools"] = tools
+    thinking_cfg = _build_thinking_config(body)
+    if thinking_cfg:
+        config_kwargs["thinking_config"] = thinking_cfg
 
     resp = await client.aio.models.generate_content(
         model=model_id,
@@ -136,6 +153,9 @@ async def stream(model_id: str, body: dict, api_key: str) -> AsyncIterator[str]:
         config_kwargs["system_instruction"] = system
     if tools:
         config_kwargs["tools"] = tools
+    thinking_cfg = _build_thinking_config(body)
+    if thinking_cfg:
+        config_kwargs["thinking_config"] = thinking_cfg
 
     async for chunk in await client.aio.models.generate_content_stream(
         model=model_id,

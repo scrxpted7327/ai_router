@@ -56,6 +56,7 @@ def test_bedrock_models_register_without_api_key(monkeypatch) -> None:
 
 
 def test_handle_allows_bedrock_without_api_key(monkeypatch) -> None:
+    caps_module = importlib.import_module("middleware.capabilities")
     entry = SimpleNamespace(
         provider="bedrock",
         provider_id="amazon-bedrock",
@@ -63,9 +64,11 @@ def test_handle_allows_bedrock_without_api_key(monkeypatch) -> None:
         api_key="",
         base_url=None,
         options={"region": "us-east-1"},
+        capabilities=caps_module.Capabilities(),
     )
-    monkeypatch.setattr(app_module, "_model_control_index", lambda: asyncio.sleep(0, result=({entry.model_id}, {})))
-    monkeypatch.setattr(app_module.reg, "get", lambda model_id: entry)
+    monkeypatch.setattr(app_module, "_model_control_index", lambda: asyncio.sleep(0, result=({entry.model_id}, {}, {})))
+    monkeypatch.setattr(app_module.reg, "get", lambda model_id, **kw: entry)
+    monkeypatch.setattr(app_module.reg, "get_entries_for_model", lambda model_id: [entry])
 
     async def _fake_complete(_entry, _body):
         return {"ok": True}
@@ -81,3 +84,40 @@ def test_handle_allows_bedrock_without_api_key(monkeypatch) -> None:
     )
 
     assert json.loads(response.body.decode("utf-8")) == {"ok": True}
+
+
+def test_entries_for_model_returns_all_providers(monkeypatch) -> None:
+    """entries_for_model should list every provider that serves a model."""
+    monkeypatch.setenv("GITHUB_COPILOT_TOKEN", "cop-token")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-token")
+    monkeypatch.delenv("MODEL_ENABLED_PROVIDERS", raising=False)
+    monkeypatch.delenv("MODEL_DISABLED_PROVIDERS", raising=False)
+    monkeypatch.delenv("MODEL_WHITELIST", raising=False)
+    monkeypatch.delenv("MODEL_BLACKLIST", raising=False)
+    monkeypatch.setattr(registry, "_load_models_dev", lambda: {})
+
+    state = registry.build_registry()
+
+    # claude-opus-4-7 is served by several providers (copilot-pi, anthropic, openrouter, etc.)
+    entries = state.entries_for_model.get("claude-opus-4-7", [])
+    provider_ids = [e.provider_id for e in entries]
+    assert len(entries) > 1, f"Expected >1 providers for claude-opus-4-7, got {provider_ids}"
+
+
+def test_entries_for_model_capabilities_populated(monkeypatch) -> None:
+    """Every ModelEntry in entries_for_model must have a Capabilities object."""
+    monkeypatch.setenv("GITHUB_COPILOT_TOKEN", "cop-token")
+    monkeypatch.delenv("MODEL_ENABLED_PROVIDERS", raising=False)
+    monkeypatch.delenv("MODEL_DISABLED_PROVIDERS", raising=False)
+    monkeypatch.delenv("MODEL_WHITELIST", raising=False)
+    monkeypatch.delenv("MODEL_BLACKLIST", raising=False)
+    monkeypatch.setattr(registry, "_load_models_dev", lambda: {})
+
+    state = registry.build_registry()
+
+    caps_module = importlib.import_module("middleware.capabilities")
+    for model_id, entries in state.entries_for_model.items():
+        for e in entries:
+            assert isinstance(e.capabilities, caps_module.Capabilities), (
+                f"{model_id} / {e.provider_id} missing Capabilities"
+            )

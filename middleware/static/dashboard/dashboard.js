@@ -330,14 +330,27 @@ async function fetchProviderSettings() {
 }
 
 async function saveModelControls() {
-  const rows = Array.from(document.querySelectorAll("[data-policy-row]"));
-  const models = rows.map((row) => ({
-    id: row.dataset.modelId,
-    enabled: !!row.querySelector("[data-field='enabled']")?.checked,
-    pinned: row.querySelector("[data-field='pin']")?.classList.contains("pinned") ?? false,
-    classification: row.querySelector("[data-field='classification']")?.value || "",
-    effort: row.querySelector("[data-field='effort']")?.value || "medium",
-  }));
+  // Collect core model rows from <details data-model-id> summaries.
+  const modelNodes = Array.from(document.querySelectorAll(".policy-model[data-model-id]"));
+  const models = modelNodes.map((node) => {
+    const id = node.dataset.modelId;
+    const summary = node.querySelector("summary");
+    const enabled = !!summary?.querySelector("[data-field='enabled']")?.checked;
+    const pinned = summary?.querySelector("[data-field='pin']")?.classList.contains("pinned") ?? false;
+    const classification = summary?.querySelector("[data-field='classification']")?.value || "";
+    const effort = summary?.querySelector("[data-field='effort']")?.value || "default";
+
+    // Collect per-provider rows inside this model's details element.
+    const providerRows = Array.from(node.querySelectorAll("[data-provider-row]"));
+    const providers = providerRows.map((prow) => ({
+      provider_id: prow.dataset.providerId,
+      enabled: !!prow.querySelector("[data-field='provider-enabled']")?.checked,
+      priority: parseInt(prow.querySelector("[data-field='provider-priority']")?.value ?? "100", 10),
+    }));
+
+    return { id, enabled, pinned, classification, effort, providers };
+  });
+
   const r = await api("/dashboard/model-controls", {
     method: "POST",
     body: JSON.stringify({ models }),
@@ -845,13 +858,11 @@ function renderTokenMeta() {
 }
 
 function groupModelControls(models) {
-  const groups = new Map();
-  for (const model of models || []) {
-    const provider = model.provider || "unknown";
-    if (!groups.has(provider)) groups.set(provider, []);
-    groups.get(provider).push(model);
-  }
-  return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  // Returns the models array sorted: pinned first, then alphabetical by id.
+  return (models || []).slice().sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    return a.id.localeCompare(b.id);
+  });
 }
 
 function syncProviderToggle(container) {
@@ -892,6 +903,13 @@ function applyProviderEffort(container, effort) {
     });
 }
 
+function _capBadge(val, nullLabel) {
+  if (val === null || val === undefined) return `<span class="cap-badge cap-unknown" title="Inherited from resolver">—</span>`;
+  return val
+    ? `<span class="cap-badge cap-yes" title="Supported">✔</span>`
+    : `<span class="cap-badge cap-no" title="Not supported">✗</span>`;
+}
+
 function renderModelPolicy() {
   const host = $("#model-policy-table");
   if (!host) return;
@@ -906,78 +924,66 @@ function renderModelPolicy() {
   }
 
   const classOptions = [
-    "",
-    "heavy_reasoning",
-    "code_generation",
-    "nuanced_coding",
-    "multimodal",
-    "fast_simple",
+    "", "heavy_reasoning", "code_generation", "nuanced_coding", "multimodal", "fast_simple",
   ];
   const effortOptions = ["default", "low", "medium", "high", "xhigh"];
 
-  const groups = groupModelControls(state.modelControls);
-  const sections = groups
-    .map(([provider, models]) => {
-      const rows = models
-        .map((m) => {
-          const classSelect = classOptions
-            .map(
-              (opt) =>
-                `<option value="${opt}" ${m.classification === opt ? "selected" : ""}>${
-                  opt || "(auto)"
-                }</option>`
-            )
-            .join("");
-          const effortSelect = effortOptions
-            .map(
-              (opt) =>
-                `<option value="${opt}" ${m.effort === opt ? "selected" : ""}>${opt}</option>`
-            )
-            .join("");
-          return `<tr data-policy-row data-model-id="${escapeHtml(m.id)}">
-            <td class="mono">${escapeHtml(m.id)}</td>
-            <td><input data-field="enabled" type="checkbox" ${m.enabled ? "checked" : ""}></td>
-            <td><button type="button" class="btn btn-pin ${m.pinned ? "pinned" : ""}" data-field="pin" title="${m.pinned ? "Unpin" : "Pin to top"}">${m.pinned ? "📌" : "📍"}</button></td>
-            <td><select data-field="classification">${classSelect}</select></td>
-            <td><select data-field="effort">${effortSelect}</select></td>
-          </tr>`;
-        })
-        .join("");
+  const models = groupModelControls(state.modelControls);
+  const sections = models.map((m) => {
+    const classSelect = classOptions.map(
+      (opt) => `<option value="${opt}" ${m.classification === opt ? "selected" : ""}>${opt || "(auto)"}</option>`
+    ).join("");
+    const effortSelect = effortOptions.map(
+      (opt) => `<option value="${opt}" ${m.effort === opt ? "selected" : ""}>${opt}</option>`
+    ).join("");
 
-      return `<details class="policy-provider" data-provider="${escapeHtml(provider)}" open>
-        <summary>
-          <div class="provider-head">
-            <span class="provider-title">${escapeHtml(provider)}</span>
-            <span class="provider-meta">${models.length} model${models.length === 1 ? "" : "s"}</span>
-          </div>
-          <div class="provider-actions" onclick="event.stopPropagation()">
-            <button type="button" class="btn" data-provider-action="enable">Enable all</button>
-            <button type="button" class="btn" data-provider-action="disable">Disable all</button>
-            <button type="button" class="btn" data-provider-action="effort-default">Effort: default</button>
-            <button type="button" class="btn" data-provider-action="effort-low">Effort: low</button>
-            <button type="button" class="btn" data-provider-action="effort-medium">Effort: medium</button>
-            <button type="button" class="btn" data-provider-action="effort-high">Effort: high</button>
-            <button type="button" class="btn" data-provider-action="effort-xhigh">Effort: xhigh</button>
-          </div>
-          <label class="provider-toggle" onclick="event.stopPropagation()">
-            <input type="checkbox" data-provider-toggle="${escapeHtml(provider)}">
-            <span>Enable all</span>
-          </label>
-        </summary>
-        <div class="table-wrap">
-          <table class="policy-table">
-            <thead>
-              <tr><th>Model</th><th>Enabled</th><th>Pin</th><th>Classification</th><th>Effort</th></tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
+    const providers = m.providers || [];
+    const providerRows = providers.map((p) => {
+      const caps = p.capabilities || {};
+      return `<tr data-provider-row data-model-id="${escapeHtml(m.id)}" data-provider-id="${escapeHtml(p.provider_id)}">
+        <td class="mono provider-sub-id">${escapeHtml(p.provider_label || p.provider_id)}</td>
+        <td><input data-field="provider-enabled" type="checkbox" ${p.enabled !== false ? "checked" : ""}></td>
+        <td><input data-field="provider-priority" type="number" min="0" max="9999" value="${escapeHtml(String(p.priority ?? 100))}" style="width:4rem"></td>
+        <td class="cap-cell">${_capBadge(p.supports_effort ?? caps.effort)}</td>
+        <td class="cap-cell">${_capBadge(p.supports_thinking ?? caps.thinking)}</td>
+        <td class="cap-cell">${_capBadge(p.supports_vision ?? caps.vision)}</td>
+        <td class="cap-cell">${_capBadge(p.supports_tools ?? caps.tools)}</td>
+      </tr>`;
+    }).join("");
+
+    const providerTable = providers.length
+      ? `<table class="policy-table provider-sub-table">
+          <thead>
+            <tr>
+              <th>Provider</th><th>Enabled</th><th>Priority</th>
+              <th title="reasoning_effort">effort</th><th title="thinking/extended">think</th>
+              <th title="vision/images">vision</th><th title="tool use">tools</th>
+            </tr>
+          </thead>
+          <tbody>${providerRows}</tbody>
+        </table>`
+      : "";
+
+    return `<details class="policy-provider policy-model" data-model-id="${escapeHtml(m.id)}" ${m.pinned ? "open" : ""}>
+      <summary>
+        <div class="provider-head">
+          <span class="provider-title mono">${escapeHtml(m.id)}</span>
+          <span class="provider-meta">${escapeHtml(m.name || "")} · ${providers.length} provider${providers.length === 1 ? "" : "s"}</span>
         </div>
-      </details>`;
-    })
-    .join("");
+        <div class="provider-actions" onclick="event.stopPropagation()">
+          <input data-field="enabled" type="checkbox" ${m.enabled ? "checked" : ""} title="Enable model">
+          <label style="font-size:.8rem">On</label>
+          <button type="button" class="btn btn-pin ${m.pinned ? "pinned" : ""}" data-field="pin"
+            title="${m.pinned ? "Unpin" : "Pin to top"}">${m.pinned ? "📌" : "📍"}</button>
+          <select data-field="classification" title="Task classification">${classSelect}</select>
+          <select data-field="effort" title="Effort level">${effortSelect}</select>
+        </div>
+      </summary>
+      ${providerTable ? `<div class="table-wrap">${providerTable}</div>` : ""}
+    </details>`;
+  }).join("");
 
   host.innerHTML = `<div class="policy-groups">${sections}</div>`;
-  syncAllProviderToggles();
 }
 
 function renderAutoRouterConfig() {

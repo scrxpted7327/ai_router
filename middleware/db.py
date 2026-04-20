@@ -84,6 +84,29 @@ class ModelControl(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class ProviderModelControl(Base):
+    """Per-(provider, model) admin overrides. One row per serving provider.
+
+    `supports_*` columns use NULL to mean "inherit from capability resolver"
+    (static provider map → models.dev → catalog → false). Non-NULL values
+    are admin overrides and win over every other source.
+    """
+
+    __tablename__ = "provider_model_controls"
+    __table_args__ = (UniqueConstraint("provider_id", "model_id", name="uq_provider_model"),)
+
+    id                = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider_id       = Column(String, nullable=False, index=True)
+    model_id          = Column(String, nullable=False, index=True)
+    enabled           = Column(Boolean, default=True, nullable=False)
+    priority          = Column(Integer, default=100, nullable=False)
+    supports_effort   = Column(Boolean, nullable=True)
+    supports_thinking = Column(Boolean, nullable=True)
+    supports_vision   = Column(Boolean, nullable=True)
+    supports_tools    = Column(Boolean, nullable=True)
+    updated_at        = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class AutoRouterConfig(Base):
     """Configuration for scrxpted/auto-free, auto-premium, auto-max routing."""
 
@@ -137,6 +160,7 @@ class RouteAnalytics(Base):
     tier                    = Column(String, default="")
     user_preference_applied = Column(Boolean, default=False)
     fallback_count          = Column(Integer, default=0)
+    capability_degraded     = Column(Boolean, default=False)
     timestamp               = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     user = relationship("User")
@@ -200,4 +224,10 @@ async def init_db() -> None:
         if model_control_cols and "pinned" not in model_control_col_names:
             await conn.execute(
                 text("ALTER TABLE model_controls ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT 0")
+            )
+        route_analytics_cols = (await conn.execute(text("PRAGMA table_info(route_analytics)"))).fetchall()
+        route_analytics_col_names = {str(row[1]) for row in route_analytics_cols}
+        if route_analytics_cols and "capability_degraded" not in route_analytics_col_names:
+            await conn.execute(
+                text("ALTER TABLE route_analytics ADD COLUMN capability_degraded BOOLEAN DEFAULT 0")
             )

@@ -16,10 +16,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import httpx
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    pass
+from .capabilities import Capabilities, provider_model_capabilities
 
 MODELS_DEV_URL = "https://models.dev/api.json"
 DYNAMIC_MODELS_CACHE: dict[str, tuple[int, list]] = {}  # provider_id -> (timestamp, models)
@@ -189,6 +187,7 @@ class ModelEntry:
     provider_id: str = ""
     aliases: tuple[str, ...] = ()
     options: dict[str, str] = field(default_factory=dict)
+    capabilities: "Capabilities" = field(default_factory=lambda: Capabilities())
 
 
 @dataclass
@@ -197,6 +196,8 @@ class RegistryState:
     aliases: dict[str, str] = field(default_factory=dict)
     by_provider_model: dict[str, ModelEntry] = field(default_factory=dict)
     providers_for_model: dict[str, list[str]] = field(default_factory=dict)
+    entries_for_model: dict[str, list[ModelEntry]] = field(default_factory=dict)
+    models_dev_index: dict[str, dict] = field(default_factory=dict)
 
 
 def _env(key: str, default: str = "") -> str:
@@ -1345,6 +1346,7 @@ def _resolve_api_key(provider: ProviderConfig) -> str:
 def build_registry() -> RegistryState:
     models_dev = _index_models_dev(_load_models_dev())
     state = RegistryState()
+    state.models_dev_index = models_dev
 
     for provider, catalog in _provider_specs():
         if not _provider_allowed(provider.id):
@@ -1357,6 +1359,12 @@ def build_registry() -> RegistryState:
             if not _provider_model_allowed(provider.id, raw_model.model_id):
                 continue
             model = _enrich_model(raw_model, models_dev)
+            models_dev_entry = models_dev.get(model.model_id)
+            if not models_dev_entry and "/" in model.model_id:
+                models_dev_entry = models_dev.get(model.model_id.split("/", 1)[-1])
+            capabilities = provider_model_capabilities(
+                provider.id, model.model_id, catalog=model, models_dev_entry=models_dev_entry
+            )
             entry = ModelEntry(
                 provider=provider.api,
                 provider_id=provider.id,
@@ -1372,15 +1380,17 @@ def build_registry() -> RegistryState:
                 extra_headers=dict(provider.extra_headers),
                 aliases=model.aliases,
                 options=dict(provider.options),
+                capabilities=capabilities,
             )
+            # Later providers overwrite canonical lookup (pi_cli registered first,
+            # API providers after — so API wins unless it's missing).
             state.by_canonical_id[model.model_id] = entry
 
             provider_key = f"{provider.id}:{model.model_id}"
             state.by_provider_model[provider_key] = entry
 
-            if model.model_id not in state.providers_for_model:
-                state.providers_for_model[model.model_id] = []
-            state.providers_for_model[model.model_id].append(provider.id)
+            state.providers_for_model.setdefault(model.model_id, []).append(provider.id)
+            state.entries_for_model.setdefault(model.model_id, []).append(entry)
 
             keys = [model.model_id, f"{provider.id}/{model.model_id}", f"{provider.api}/{model.model_id}", *model.aliases]
             for key in keys:
@@ -1446,6 +1456,7 @@ def list_models() -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
     for model_id, entry in sorted(REGISTRY.by_canonical_id.items(), key=lambda item: item[0]):
+        provider_entries = REGISTRY.entries_for_model.get(model_id, [entry])
         out.append(
             {
                 "id": model_id,
@@ -1460,7 +1471,15 @@ def list_models() -> list[dict]:
                 "max_tokens": entry.max_tokens,
                 "aliases": list(entry.aliases),
                 "primary": True,
-                "providers": REGISTRY.providers_for_model.get(model_id, []),
+                "providers": [pe.provider_id for pe in provider_entries],
+                "provider_entries": [
+                    {
+                        "provider_id": pe.provider_id,
+                        "provider_label": pe.provider_label or pe.provider_id,
+                        "capabilities": pe.capabilities.as_dict(),
+                    }
+                    for pe in provider_entries
+                ],
             }
         )
         seen.add(f"{entry.provider_id}:{model_id}")
@@ -1486,9 +1505,29 @@ def list_models() -> list[dict]:
                 "aliases": list(entry.aliases),
                 "primary": False,
                 "providers": [provider_id],
+                "provider_entries": [
+                    {
+                        "provider_id": provider_id,
+                        "provider_label": entry.provider_label or provider_id,
+                        "capabilities": entry.capabilities.as_dict(),
+                    }
+                ],
             }
         )
     return out
+
+
+def get_entries_for_model(model_id: str) -> list[ModelEntry]:
+    """Return every ModelEntry serving the given canonical model_id."""
+    if not model_id:
+        return []
+    direct = REGISTRY.entries_for_model.get(model_id)
+    if direct:
+        return list(direct)
+    canonical = REGISTRY.aliases.get(_normalise_key(model_id))
+    if canonical:
+        return list(REGISTRY.entries_for_model.get(canonical, []))
+    return []
 
 
 def _load_dotenv(path: str) -> None:

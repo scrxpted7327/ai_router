@@ -726,6 +726,34 @@ button.btn-primary:hover {
   opacity: 1;
 }
 
+/* Per-provider sub-table inside a model details block */
+.provider-sub-table {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+}
+.provider-sub-id {
+  color: var(--text-muted);
+  padding-left: 1.5rem !important;
+}
+.cap-cell {
+  text-align: center;
+}
+.cap-badge {
+  font-size: 0.75rem;
+  font-weight: bold;
+}
+.cap-yes  { color: #4caf50; }
+.cap-no   { color: #e57373; }
+.cap-unknown { color: var(--text-muted); }
+
+/* Compact provider-actions row inside summary */
+.policy-model > summary .provider-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .toggle-wrap {
   display: flex;
   align-items: center;

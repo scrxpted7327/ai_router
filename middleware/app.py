@@ -39,8 +39,13 @@ from .anthropic_proxy import router as anthropic_router
 from .auth import COOKIE_NAME, require_admin, require_whitelisted, router as auth_router
 from .compactor import compact, needs_compaction
 from .db import (
-    AutoRouterConfig, AutoRouterConfigHistory, ModelControl, ProviderSetting,
-    RouteAnalytics, Session, SessionLocal, User, UserRoutingPreference, init_db,
+    AutoRouterConfig, AutoRouterConfigHistory, ModelControl, ProviderModelControl,
+    ProviderSetting, RouteAnalytics, Session, SessionLocal, User,
+    UserRoutingPreference, init_db,
+)
+from .provider_selector import (
+    ProviderOverride, RequestFeatures, Selection,
+    extract_request_features, pick_provider_for_model,
 )
 from .format_adapter import normalise_request, stream_as_responses_api
 from .router import route, TaskType, _ROUTES
@@ -49,6 +54,7 @@ from .providers import anthropic as anthropic_provider
 from .providers import bedrock as bedrock_provider
 from .providers import gemini as gemini_provider
 from .providers import openai_compat
+from .providers import openai_sdk as openai_sdk_provider
 from .providers import pi_cli as pi_cli_provider
 from .tokens import delete_user_token, get_user_token, list_user_tokens, set_user_token
 
@@ -65,6 +71,13 @@ ALLOWED_CLASSIFICATIONS = {
     "fast_simple",
 }
 ALLOWED_EFFORTS = {"default", "low", "medium", "high", "xhigh"}
+
+# Provider IDs that use the native OpenAI SDK with full reasoning_effort support
+# (vs. relay providers that go through openai_compat pass-through semantics).
+_SDK_OPENAI_PROVIDERS: frozenset[str] = frozenset({
+    "openai", "xai", "deepseek", "mistral", "cohere",
+    "together", "fireworks", "perplexity", "zai",
+})
 
 log = logging.getLogger("ai_router")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -172,7 +185,13 @@ def _model_effort_guess(model_id: str) -> str:
     return "default"
 
 
-async def _model_control_index() -> tuple[set[str], dict[str, dict[str, str]]]:
+async def _model_control_index() -> tuple[set[str], dict[str, dict[str, str]], dict[tuple[str, str], ProviderOverride]]:
+    """Return (enabled_canonical_ids, meta_by_model_id, provider_overrides).
+
+    `provider_overrides` is keyed (provider_id, canonical_model_id) → ProviderOverride.
+    """
+    from .capabilities import Capabilities, provider_model_capabilities
+
     models = reg.list_models()
     model_ids = [m["id"] for m in models]
     model_provider = {m["id"]: m.get("provider_id", "") for m in models}
@@ -180,6 +199,7 @@ async def _model_control_index() -> tuple[set[str], dict[str, dict[str, str]]]:
         mc_rows = (
             await db.execute(select(ModelControl).where(ModelControl.model_id.in_(model_ids)))
         ).scalars().all()
+        pmc_rows = (await db.execute(select(ProviderModelControl))).scalars().all()
         ps_rows = (await db.execute(select(ProviderSetting))).scalars().all()
     by_id = {row.model_id: row for row in mc_rows}
     disabled_providers: set[str] = set()
@@ -187,6 +207,24 @@ async def _model_control_index() -> tuple[set[str], dict[str, dict[str, str]]]:
         s = json.loads(ps.settings_json or "{}")
         if not s.get("enabled", True):
             disabled_providers.add(ps.provider_id)
+
+    # Build per-provider override map, merging DB overrides with registry capabilities.
+    provider_overrides: dict[tuple[str, str], ProviderOverride] = {}
+    for pmc in pmc_rows:
+        entry = reg.get_from_provider(pmc.provider_id, pmc.model_id)
+        base_caps = entry.capabilities if entry else Capabilities()
+        admin_caps = Capabilities(
+            effort=pmc.supports_effort if pmc.supports_effort is not None else base_caps.effort,
+            thinking=pmc.supports_thinking if pmc.supports_thinking is not None else base_caps.thinking,
+            vision=pmc.supports_vision if pmc.supports_vision is not None else base_caps.vision,
+            tools=pmc.supports_tools if pmc.supports_tools is not None else base_caps.tools,
+        )
+        provider_overrides[(pmc.provider_id, pmc.model_id)] = ProviderOverride(
+            enabled=bool(pmc.enabled),
+            priority=int(pmc.priority),
+            capabilities=admin_caps,
+        )
+
     enabled: set[str] = set()
     meta: dict[str, dict[str, str]] = {}
     for model_id in model_ids:
@@ -201,7 +239,7 @@ async def _model_control_index() -> tuple[set[str], dict[str, dict[str, str]]]:
             "effort": (row.effort if row else _model_effort_guess(model_id)) or "default",
             "pinned": bool(row.pinned) if row else False,
         }
-    return enabled, meta
+    return enabled, meta, provider_overrides
 
 
 def _target_effort_for_task(task_type: str) -> str:
@@ -322,10 +360,14 @@ async def get_model_controls(_admin=Depends(require_admin)) -> dict:
     models = reg.list_models()
     model_ids = [m["id"] for m in models]
     async with SessionLocal() as db:
-        rows = (
+        mc_rows = (
             await db.execute(select(ModelControl).where(ModelControl.model_id.in_(model_ids)))
         ).scalars().all()
-        existing = {row.model_id: row for row in rows}
+        pmc_rows = (await db.execute(select(ProviderModelControl))).scalars().all()
+        existing = {row.model_id: row for row in mc_rows}
+        pmc_by_key: dict[tuple[str, str], ProviderModelControl] = {
+            (row.provider_id, row.model_id): row for row in pmc_rows
+        }
 
         changed = False
         for model_id in model_ids:
@@ -346,18 +388,35 @@ async def get_model_controls(_admin=Depends(require_admin)) -> dict:
 
     controls = []
     for model in models:
-        row = existing[model["id"]]
-        controls.append(
-            {
-                "id": model["id"],
-                "name": model.get("name") or model["id"],
-                "provider": model.get("owned_by") or "",
-                "enabled": bool(row.enabled),
-                "pinned": bool(row.pinned),
-                "classification": row.classification or "",
-                "effort": row.effort or "default",
-            }
-        )
+        mid = model["id"]
+        row = existing[mid]
+        provider_entries = model.get("provider_entries") or []
+        providers_out = []
+        for pe in provider_entries:
+            pid = pe["provider_id"]
+            pmc = pmc_by_key.get((pid, mid))
+            providers_out.append({
+                "provider_id": pid,
+                "provider_label": pe.get("provider_label", pid),
+                "enabled": bool(pmc.enabled) if pmc else True,
+                "priority": int(pmc.priority) if pmc else 100,
+                "capabilities": pe.get("capabilities", {}),
+                "supports_effort": pmc.supports_effort if pmc else None,
+                "supports_thinking": pmc.supports_thinking if pmc else None,
+                "supports_vision": pmc.supports_vision if pmc else None,
+                "supports_tools": pmc.supports_tools if pmc else None,
+            })
+        controls.append({
+            "id": mid,
+            "name": model.get("name") or mid,
+            "enabled": bool(row.enabled),
+            "pinned": bool(row.pinned),
+            "classification": row.classification or "",
+            "effort": row.effort or "default",
+            "providers": providers_out,
+        })
+    # Pinned models first, then alphabetical.
+    controls.sort(key=lambda m: (0 if m["pinned"] else 1, m["id"]))
     return {"models": controls}
 
 
@@ -393,6 +452,31 @@ async def set_model_controls(payload: dict, _admin=Depends(require_admin)) -> di
             row.pinned = pinned
             row.classification = classification
             row.effort = effort
+
+            # Upsert per-provider rows if provided.
+            for prov in (item.get("providers") or []):
+                if not isinstance(prov, dict):
+                    continue
+                provider_id = str(prov.get("provider_id") or "").strip()
+                if not provider_id:
+                    continue
+                pmc = (await db.execute(
+                    select(ProviderModelControl).where(
+                        ProviderModelControl.provider_id == provider_id,
+                        ProviderModelControl.model_id == model_id,
+                    )
+                )).scalars().first()
+                if not pmc:
+                    pmc = ProviderModelControl(provider_id=provider_id, model_id=model_id)
+                    db.add(pmc)
+                if "enabled" in prov:
+                    pmc.enabled = bool(prov["enabled"])
+                if "priority" in prov:
+                    pmc.priority = int(prov["priority"])
+                for flag in ("supports_effort", "supports_thinking", "supports_vision", "supports_tools"):
+                    if flag in prov:
+                        val = prov[flag]
+                        setattr(pmc, flag, None if val is None else bool(val))
 
         await db.commit()
     return {"ok": True}
@@ -640,7 +724,7 @@ async def preview_routing(payload: dict, user=Depends(require_whitelisted)) -> d
     if task_type not in ALLOWED_CLASSIFICATIONS or not task_type:
         raise HTTPException(status_code=400, detail=f"Invalid task_type: {task_type}")
 
-    enabled, _meta = await _model_control_index()
+    enabled, _meta, _pov = await _model_control_index()
     model_id = await _auto_route_model(tier, task_type, enabled, user=user)
     if not model_id:
         return {"selected_model": None, "provider": None, "reason": "no_match"}
@@ -959,7 +1043,7 @@ async def terminal(websocket: WebSocket) -> None:
 
 @app.get("/v1/models")
 async def list_models(user=Depends(require_whitelisted)) -> dict:
-    enabled, meta = await _model_control_index()
+    enabled, meta, _pov = await _model_control_index()
     items = []
     for model in reg.list_models():
         if model["id"] not in enabled:
@@ -1022,6 +1106,7 @@ async def _log_route_analytics(
     tier: str,
     user_preference_applied: bool,
     fallback_count: int = 0,
+    capability_degraded: bool = False,
 ) -> None:
     try:
         async with SessionLocal() as db:
@@ -1034,6 +1119,7 @@ async def _log_route_analytics(
                 tier=tier,
                 user_preference_applied=user_preference_applied,
                 fallback_count=fallback_count,
+                capability_degraded=capability_degraded,
             ))
             await db.commit()
     except Exception:
@@ -1183,34 +1269,62 @@ async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
 
     # 2. Resolve model — explicit name or auto-route
     requested = body.get("model", "")
-    enabled, meta = await _model_control_index()
-    entry = reg.get(requested)
+    enabled, meta, provider_overrides = await _model_control_index()
+    req_features = extract_request_features(body)
+    anchor = reg.get(requested)
 
     # Handle auto-routing pseudo-models
-    if requested and entry and entry.base_url == "INTERNAL":
+    if requested and anchor and anchor.base_url == "INTERNAL":
         decision = route(messages)
         task_type = getattr(decision.task_type, "value", str(decision.task_type))
         auto_model_id = await _auto_route_model(requested, task_type, enabled, user=user)
         if auto_model_id:
-            entry = reg.get(auto_model_id)
-            log.info("Auto-route '%s' [%s] → %s", requested, task_type, auto_model_id)
+            sel = pick_provider_for_model(
+                auto_model_id,
+                features=req_features,
+                master_enabled=enabled,
+                provider_overrides=provider_overrides,
+            )
+            entry = sel.entry if sel else reg.get(auto_model_id)
+            if sel and sel.degraded:
+                log.warning("Auto-route '%s' → %s: capability degraded (%s)", requested, auto_model_id, sel.reason)
+            log.info("Auto-route '%s' [%s] → %s (%s)", requested, task_type, auto_model_id,
+                     entry.provider_id if entry else "?")
         else:
             raise HTTPException(status_code=503, detail=f"No models available for auto-routing tier '{requested}'")
-    elif requested and requested not in enabled:
+    elif requested and anchor and anchor.model_id not in enabled:
         raise HTTPException(status_code=403, detail=f"Model '{requested}' is disabled by admin policy")
+    elif anchor and anchor.base_url != "INTERNAL":
+        # Capability-aware provider selection for explicit model requests.
+        sel = pick_provider_for_model(
+            requested,
+            features=req_features,
+            master_enabled=enabled,
+            provider_overrides=provider_overrides,
+        )
+        entry = sel.entry if sel else anchor
+        if sel and sel.degraded:
+            log.warning("Model '%s' → %s: capability degraded (%s)", requested, entry.provider_id, sel.reason)
+        log.info("Model '%s' → %s (%s)", requested, entry.model_id, entry.provider_id)
+    else:
+        # No anchor found — fall through to auto-route by task classification.
+        entry = None
+
     if not entry:
         decision = route(messages)
         task_type = getattr(decision.task_type, "value", str(decision.task_type))
-        primary = decision.primary if decision.primary in enabled else ""
-        entry = reg.get(primary) if primary else None
-        if not entry:
-            # walk fallbacks
-            for fb in decision.fallbacks:
-                if fb not in enabled:
-                    continue
-                entry = reg.get(fb)
-                if entry:
-                    break
+        for candidate_id in [decision.primary, *decision.fallbacks]:
+            if candidate_id not in enabled:
+                continue
+            sel = pick_provider_for_model(
+                candidate_id,
+                features=req_features,
+                master_enabled=enabled,
+                provider_overrides=provider_overrides,
+            )
+            if sel:
+                entry = sel.entry
+                break
         if not entry:
             entry = _policy_pick_for_task(
                 task_type=task_type,
@@ -1221,8 +1335,6 @@ async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
         if not entry:
             raise HTTPException(status_code=503, detail=f"No provider available for '{requested}'")
         log.info("Auto-routed '%s' → %s (%s)", requested, entry.model_id, entry.provider)
-    else:
-        log.info("Model '%s' → %s (%s)", requested, entry.model_id, entry.provider)
 
     # 3. Apply user's personal API key if one is stored; non-admins must have one
     # pi_cli providers use server-side auth — no per-user key needed
@@ -1302,7 +1414,40 @@ async def _try_stream(entry: reg.ModelEntry, body: dict, is_responses_api: bool)
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+def _sanitize_body(body: dict, entry: reg.ModelEntry) -> dict:
+    """Strip request features this provider can't honour."""
+    caps = entry.capabilities
+    if caps.effort and caps.thinking:
+        return body  # capable of everything we'd send
+    out = dict(body)
+    if not caps.effort:
+        out.pop("reasoning_effort", None)
+    if not caps.thinking:
+        out.pop("thinking", None)
+    if not caps.vision:
+        # Strip image parts from messages
+        msgs = out.get("messages")
+        if msgs:
+            cleaned = []
+            for m in msgs:
+                content = m.get("content")
+                if isinstance(content, list):
+                    filtered = [
+                        p for p in content
+                        if not (isinstance(p, dict) and p.get("type") in ("image_url", "input_image", "image"))
+                    ]
+                    m = dict(m)
+                    m["content"] = filtered if filtered else ""
+                cleaned.append(m)
+            out["messages"] = cleaned
+    if not caps.tools:
+        out.pop("tools", None)
+        out.pop("tool_choice", None)
+    return out
+
+
 async def _complete(entry: reg.ModelEntry, body: dict) -> dict:
+    body = _sanitize_body(body, entry)
     try:
         if entry.provider == "anthropic":
             return await anthropic_provider.chat(entry.model_id, body, entry.api_key)
@@ -1312,6 +1457,11 @@ async def _complete(entry: reg.ModelEntry, body: dict) -> dict:
             return await bedrock_provider.chat(entry.model_id, body, entry.options)
         if entry.provider == "pi_cli":
             return await pi_cli_provider.chat(entry.model_id, body)
+        if entry.provider == "openai" and entry.provider_id in _SDK_OPENAI_PROVIDERS:
+            return await openai_sdk_provider.chat(
+                entry.model_id, body, entry.api_key, entry.base_url, entry.extra_headers,
+                supports_effort=entry.capabilities.effort,
+            )
         return await openai_compat.chat(
             entry.model_id, body, entry.api_key, entry.base_url, entry.extra_headers
         )
@@ -1321,6 +1471,7 @@ async def _complete(entry: reg.ModelEntry, body: dict) -> dict:
 
 
 async def _stream(entry: reg.ModelEntry, body: dict) -> AsyncIterator[str]:
+    body = _sanitize_body(body, entry)
     try:
         if entry.provider == "anthropic":
             async for chunk in anthropic_provider.stream(entry.model_id, body, entry.api_key):
@@ -1333,6 +1484,12 @@ async def _stream(entry: reg.ModelEntry, body: dict) -> AsyncIterator[str]:
                 yield chunk
         elif entry.provider == "pi_cli":
             async for chunk in pi_cli_provider.stream(entry.model_id, body):
+                yield chunk
+        elif entry.provider == "openai" and entry.provider_id in _SDK_OPENAI_PROVIDERS:
+            async for chunk in openai_sdk_provider.stream(
+                entry.model_id, body, entry.api_key, entry.base_url, entry.extra_headers,
+                supports_effort=entry.capabilities.effort,
+            ):
                 yield chunk
         else:
             async for chunk in openai_compat.stream(

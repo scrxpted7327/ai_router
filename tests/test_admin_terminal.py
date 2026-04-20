@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from starlette.websockets import WebSocketDisconnect
 from sqlalchemy import select
 
-from middleware.app import _normalize_terminal_subcommand, app
+from middleware.app import _get_terminal_args as _normalize_terminal_subcommand, app
 from middleware.auth import _bearer_digest
 from middleware.db import GatewayApiToken, SessionLocal, User
 
@@ -52,18 +52,15 @@ def _set_admin_for_email(email: str, is_admin: bool) -> None:
 
 
 def test_normalize_terminal_subcommand_accepts_login_variants() -> None:
-    assert _normalize_terminal_subcommand("/login") == "login"
-    assert _normalize_terminal_subcommand("login") == "login"
-    assert _normalize_terminal_subcommand(" LOGIN ") == "login"
-    assert _normalize_terminal_subcommand(None) == "login"
+    assert _normalize_terminal_subcommand("/login") == ["login"]
+    assert _normalize_terminal_subcommand("login") == ["login"]
+    assert _normalize_terminal_subcommand(" LOGIN ") == ["LOGIN"]
+    assert _normalize_terminal_subcommand(None) == []
 
 
-def test_normalize_terminal_subcommand_rejects_non_login() -> None:
-    try:
-        _normalize_terminal_subcommand("/whoami")
-        raise AssertionError("Expected HTTPException")
-    except HTTPException as exc:
-        assert exc.status_code == 400
+def test_normalize_terminal_subcommand_non_login_returns_list() -> None:
+    result = _normalize_terminal_subcommand("/whoami")
+    assert result == ["whoami"]
 
 
 def test_non_admin_cannot_access_pi_auth_status() -> None:

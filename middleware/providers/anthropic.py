@@ -76,6 +76,21 @@ def _convert_tools(tools: list[dict]) -> list[dict]:
     return result
 
 
+def _build_thinking(body: dict) -> dict[str, Any] | None:
+    """Translate OpenAI-style reasoning/effort params to Anthropic thinking block."""
+    if body.get("thinking"):
+        t = body["thinking"]
+        if isinstance(t, dict) and t.get("type") == "enabled":
+            return t
+        if t is True:
+            return {"type": "enabled", "budget_tokens": body.get("max_tokens") or 16_000}
+    effort = body.get("reasoning_effort")
+    effort_budget = {"low": 4_000, "medium": 10_000, "default": 10_000, "high": 20_000, "xhigh": 40_000}
+    if effort and effort != "default" and effort in effort_budget:
+        return {"type": "enabled", "budget_tokens": effort_budget[effort]}
+    return None
+
+
 async def chat(model_id: str, body: dict, api_key: str) -> dict:
     client = _client(api_key)
     system, messages = _convert_messages(body.get("messages", []))
@@ -90,6 +105,12 @@ async def chat(model_id: str, body: dict, api_key: str) -> dict:
         kwargs["system"] = system
     if tools:
         kwargs["tools"] = tools
+    thinking = _build_thinking(body)
+    if thinking:
+        kwargs["thinking"] = thinking
+        kwargs.setdefault("betas", [])
+        if "interleaved-thinking-2025-05-14" not in kwargs["betas"]:
+            kwargs["betas"].append("interleaved-thinking-2025-05-14")
 
     resp = await client.messages.create(**kwargs)
 
@@ -140,6 +161,12 @@ async def stream(model_id: str, body: dict, api_key: str) -> AsyncIterator[str]:
         kwargs["system"] = system
     if tools:
         kwargs["tools"] = tools
+    thinking = _build_thinking(body)
+    if thinking:
+        kwargs["thinking"] = thinking
+        kwargs.setdefault("betas", [])
+        if "interleaved-thinking-2025-05-14" not in kwargs["betas"]:
+            kwargs["betas"].append("interleaved-thinking-2025-05-14")
 
     tool_call_map: dict[str, dict] = {}
 
