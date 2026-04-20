@@ -344,7 +344,7 @@ async function saveModelControls() {
 
 async function saveAutoRouterConfig() {
   const configs = {};
-  const tiers = ["auto-free", "auto-premium", "auto-max"];
+  const tiers = ["auto-light", "auto-free", "auto-premium", "auto-max"];
   const taskTypes = ["heavy_reasoning", "code_generation", "nuanced_coding", "multimodal", "fast_simple"];
 
   for (const tier of tiers) {
@@ -398,7 +398,7 @@ async function saveProviderSettings() {
 
 async function validateAutoRouterModels() {
   const allIds = [];
-  const tiers = ["auto-free", "auto-premium", "auto-max"];
+  const tiers = ["auto-light", "auto-free", "auto-premium", "auto-max"];
   const taskTypes = ["heavy_reasoning", "code_generation", "nuanced_coding", "multimodal", "fast_simple"];
   for (const tier of tiers) {
     for (const task of taskTypes) {
@@ -595,7 +595,7 @@ async function fetchMyRoutingPreferences() {
 
 function populateMyRoutingForm(data) {
   const taskTypes = ["heavy_reasoning", "code_generation", "nuanced_coding", "multimodal", "fast_simple"];
-  const tiers = ["auto-free", "auto-premium", "auto-max"];
+  const tiers = ["auto-light", "auto-free", "auto-premium", "auto-max"];
 
   const pp = document.getElementById("pref-provider-priority");
   if (pp) pp.value = (data.provider_priority || []).join(", ");
@@ -621,7 +621,7 @@ function populateMyRoutingForm(data) {
 
 function collectMyRoutingForm() {
   const taskTypes = ["heavy_reasoning", "code_generation", "nuanced_coding", "multimodal", "fast_simple"];
-  const tiers = ["auto-free", "auto-premium", "auto-max"];
+  const tiers = ["auto-light", "auto-free", "auto-premium", "auto-max"];
 
   const pp = document.getElementById("pref-provider-priority");
   const providerPriority = pp ? pp.value.split(",").map(s => s.trim()).filter(Boolean) : [];
@@ -976,6 +976,7 @@ function renderAutoRouterConfig() {
   }
 
   const tiers = [
+    { id: "auto-light", label: "Auto Light" },
     { id: "auto-free", label: "Auto Free" },
     { id: "auto-premium", label: "Auto Premium" },
     { id: "auto-max", label: "Auto Max" },

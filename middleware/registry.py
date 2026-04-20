@@ -851,6 +851,7 @@ def _auto_routing_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] 
         base_url="INTERNAL",
     )
     models = (
+        CatalogModel(provider.id, provider.api, provider.label, "scrxpted/auto-light",   "Auto Light Router",    ("auto-light",),   False, False,  32_768,  4_096),
         CatalogModel(provider.id, provider.api, provider.label, "scrxpted/auto-free",    "Auto Free Router",     ("auto-free",),    False, True,  200_000, 16_384),
         CatalogModel(provider.id, provider.api, provider.label, "scrxpted/auto-premium", "Auto Premium Router",  ("auto-premium",), True,  True,  1_000_000, 32_768),
         CatalogModel(provider.id, provider.api, provider.label, "scrxpted/auto-max",     "Auto Max Router",      ("auto-max",),     True,  True,  1_000_000, 100_000),

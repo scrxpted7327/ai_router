@@ -384,8 +384,8 @@ async def set_model_controls(payload: dict, _admin=Depends(require_admin)) -> di
 
 @app.get("/dashboard/auto-router-config")
 async def get_auto_router_config(_admin=Depends(require_admin)) -> dict:
-    """Get auto-router configuration (scrxpted/auto-free, auto-premium, auto-max)."""
-    tiers = ["auto-free", "auto-premium", "auto-max"]
+    """Get auto-router configuration (scrxpted/auto-light, auto-free, auto-premium, auto-max)."""
+    tiers = ["auto-light", "auto-free", "auto-premium", "auto-max"]
     task_types = ["heavy_reasoning", "code_generation", "nuanced_coding", "multimodal", "fast_simple"]
 
     async with SessionLocal() as db:
@@ -970,7 +970,14 @@ async def _auto_route_model(
     enabled: set[str],
     user: User | None = None,
 ) -> str | None:
-    """Route auto-free/premium/max to actual models based on task classification."""
+    """Route auto-light/free/premium/max to actual models based on task classification."""
+    AUTO_LIGHT_ROUTES = {
+        "heavy_reasoning": ["llama-3.1-8b-instant", "llama3-8b-8192", "free-llama"],
+        "code_generation": ["llama-3.1-8b-instant", "llama3-8b-8192", "free-llama"],
+        "nuanced_coding":  ["llama-3.1-8b-instant", "llama3-8b-8192", "free-llama"],
+        "multimodal":      ["llama-3.2-11b-vision-preview", "free-gemma", "free-llama"],
+        "fast_simple":     ["llama-3.1-8b-instant", "glm-flash", "free-llama"],
+    }
     AUTO_FREE_ROUTES = {
         "heavy_reasoning": ["deepseek-r1", "qwq-groq", "free"],
         "code_generation": ["deepseek-chat", "qwen", "free"],
@@ -994,6 +1001,8 @@ async def _auto_route_model(
     }
 
     routes_map = {
+        "scrxpted/auto-light": AUTO_LIGHT_ROUTES,
+        "auto-light": AUTO_LIGHT_ROUTES,
         "scrxpted/auto-free": AUTO_FREE_ROUTES,
         "auto-free": AUTO_FREE_ROUTES,
         "scrxpted/auto-premium": AUTO_PREMIUM_ROUTES,
