@@ -1039,7 +1039,6 @@ def _opencode_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | No
         # Main API models
         CatalogModel(provider.id, provider.api, provider.label, "gpt-5.4-codex", "GPT-5.4 Codex", ("opencode", "opencode-codex"), True, True, 1_000_000, 100_000),
         CatalogModel(provider.id, provider.api, provider.label, "gpt-5.3-codex", "GPT-5.3 Codex", ("opencode-5.3",), True, True, 1_000_000, 100_000),
-        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7", "Claude Opus 4.7", ("opencode-opus",), True, True, 200_000, 32_000),
         CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4-6", "Claude Sonnet 4.6", ("opencode-sonnet",), False, True, 200_000, 16_000),
         CatalogModel(provider.id, provider.api, provider.label, "gpt-5.1", "GPT-5.1", ("opencode-5.1",), False, True, 1_047_576, 32_768),
         CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-pro", "Gemini 2.5 Pro", ("opencode-gemini",), True, True, 1_048_576, 65_536),

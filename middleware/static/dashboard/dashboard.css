@@ -715,6 +715,28 @@ button.btn-primary:hover {
   background: rgba(248, 113, 113, 0.22) !important;
 }
 
+.btn-pin {
+  padding: 0.2rem 0.4rem !important;
+  font-size: 0.85rem !important;
+  opacity: 0.4;
+  border: none !important;
+  background: transparent !important;
+}
+.btn-pin:hover, .btn-pin.pinned {
+  opacity: 1;
+}
+
+.toggle-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+.toggle-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
 .panel-top {
   display: flex;
   align-items: center;

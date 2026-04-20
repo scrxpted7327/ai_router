@@ -32,6 +32,7 @@ const state = {
   modelControls: null,
   autoRouterConfig: null,
   providerSettings: null,
+  providers: null,
   routingAnalytics: null,
   routingHistory: null,
   providerTokens: [],       // [{provider_id, token_prefix, updated_at}]
@@ -314,14 +315,18 @@ async function fetchAutoRouterConfig() {
 async function fetchProviderSettings() {
   if (!state.user?.is_admin) {
     state.providerSettings = null;
+    state.providers = null;
     return;
   }
-  const r = await api("/dashboard/provider-settings");
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    throw new Error(data.detail || `GET /dashboard/provider-settings ${r.status}`);
-  }
-  state.providerSettings = data.settings || {};
+  const [r1, r2] = await Promise.all([
+    api("/dashboard/provider-settings"),
+    api("/dashboard/providers"),
+  ]);
+  const d1 = await r1.json().catch(() => ({}));
+  const d2 = await r2.json().catch(() => ({}));
+  if (!r1.ok) throw new Error(d1.detail || `GET /dashboard/provider-settings ${r1.status}`);
+  state.providerSettings = d1.settings || {};
+  state.providers = d2.providers || [];
 }
 
 async function saveModelControls() {
@@ -329,6 +334,7 @@ async function saveModelControls() {
   const models = rows.map((row) => ({
     id: row.dataset.modelId,
     enabled: !!row.querySelector("[data-field='enabled']")?.checked,
+    pinned: row.querySelector("[data-field='pin']")?.classList.contains("pinned") ?? false,
     classification: row.querySelector("[data-field='classification']")?.value || "",
     effort: row.querySelector("[data-field='effort']")?.value || "medium",
   }));
@@ -372,26 +378,33 @@ async function saveAutoRouterConfig() {
 }
 
 async function saveProviderSettings() {
+  const allProviders = state.providers || [];
   const settings = {};
-  const providers = ["opencode", "kilo", "github-copilot"];
+  const providerUpdates = {};
 
-  for (const provider of providers) {
-    settings[provider] = {};
-    const baseUrlInput = document.getElementById(`provider-setting-${provider}-base-url`);
+  for (const provider of allProviders) {
+    const enabledCb = document.getElementById(`provider-enabled-${provider.id}`);
+    if (enabledCb !== null) {
+      providerUpdates[provider.id] = { enabled: enabledCb.checked };
+    }
+    const baseUrlInput = document.getElementById(`provider-setting-${provider.id}-base-url`);
     if (baseUrlInput) {
+      settings[provider.id] = settings[provider.id] || {};
       const value = baseUrlInput.value.trim();
-      if (value) settings[provider].base_url = value;
+      if (value) settings[provider.id].base_url = value;
     }
   }
 
-  const r = await api("/dashboard/provider-settings", {
-    method: "POST",
-    body: JSON.stringify({ settings }),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    throw new Error(data.detail || "Failed to save provider settings");
-  }
+  await Promise.all([
+    ...(Object.keys(settings).length ? [api("/dashboard/provider-settings", {
+      method: "POST",
+      body: JSON.stringify({ settings }),
+    }).then(r => r.json())] : []),
+    ...(Object.keys(providerUpdates).length ? [api("/dashboard/providers", {
+      method: "POST",
+      body: JSON.stringify({ providers: providerUpdates }),
+    }).then(r => r.json())] : []),
+  ]);
 }
 
 // ── Routing: validation, test, analytics, history, import/export ─────────────
@@ -924,6 +937,7 @@ function renderModelPolicy() {
           return `<tr data-policy-row data-model-id="${escapeHtml(m.id)}">
             <td class="mono">${escapeHtml(m.id)}</td>
             <td><input data-field="enabled" type="checkbox" ${m.enabled ? "checked" : ""}></td>
+            <td><button type="button" class="btn btn-pin ${m.pinned ? "pinned" : ""}" data-field="pin" title="${m.pinned ? "Unpin" : "Pin to top"}">${m.pinned ? "📌" : "📍"}</button></td>
             <td><select data-field="classification">${classSelect}</select></td>
             <td><select data-field="effort">${effortSelect}</select></td>
           </tr>`;
@@ -953,7 +967,7 @@ function renderModelPolicy() {
         <div class="table-wrap">
           <table class="policy-table">
             <thead>
-              <tr><th>Model</th><th>Enabled</th><th>Classification</th><th>Effort</th></tr>
+              <tr><th>Model</th><th>Enabled</th><th>Pin</th><th>Classification</th><th>Effort</th></tr>
             </thead>
             <tbody>${rows}</tbody>
           </table>
@@ -1089,42 +1103,63 @@ function renderProviderSettings() {
   }
 
   const settings = state.providerSettings || {};
+  const allProviders = state.providers || [];
 
-  const providers = [
-    { id: "opencode", label: "OpenCode", envKey: "OPENCODE_API_KEY", baseUrlKey: "OPENCODE_BASE_URL",
-      note: "Set base URL to https://api.opencode.ai/v1 (main) or https://opencode.ai/zen/v1 (Zen)" },
-    { id: "kilo", label: "Kilo AI", envKey: "KILO_API_KEY", baseUrlKey: "KILO_BASE_URL",
-      note: "Base URL: https://api.kilo.ai/api/gateway" },
-    { id: "github-copilot", label: "GitHub Copilot", envKey: "GITHUB_COPILOT_TOKEN", baseUrlKey: "COPILOT_BASE_URL",
-      note: "Base URL: https://api.githubcopilot.com" },
-  ];
+  // Base URL override config for known providers
+  const baseUrlConfig = {
+    "opencode": { envKey: "OPENCODE_API_KEY", note: "https://api.opencode.ai/v1 or https://opencode.ai/zen/v1 (Zen)" },
+    "kilo": { envKey: "KILO_API_KEY", note: "https://api.kilo.ai/api/gateway" },
+    "github-copilot": { envKey: "GITHUB_COPILOT_TOKEN", note: "https://api.githubcopilot.com" },
+  };
 
-  const sections = providers.map(provider => {
+  const sections = allProviders.map(provider => {
     const providerSettings = settings[provider.id] || {};
     const baseUrl = providerSettings.base_url || "";
+    const enabled = provider.enabled !== false;
+    const cfg = baseUrlConfig[provider.id];
+    const isPiCli = provider.api === "pi_cli";
 
-    return `<details class="policy-provider" open>
+    return `<details class="policy-provider">
       <summary>
         <div class="provider-head">
           <span class="provider-title">${escapeHtml(provider.label)}</span>
-          <span class="provider-meta">${escapeHtml(provider.envKey)}</span>
+          <span class="provider-meta">${provider.model_count} model${provider.model_count !== 1 ? "s" : ""}${isPiCli ? " · pi CLI" : ""}</span>
         </div>
       </summary>
       <div class="table-wrap">
-        <p class="panel-note" style="margin: 0.5rem 0">${escapeHtml(provider.note)}</p>
         <table class="policy-table">
           <tbody>
             <tr>
-              <td><strong>Base URL Override</strong></td>
-              <td><input type="text" id="provider-setting-${provider.id}-base-url" value="${escapeHtml(baseUrl)}" placeholder="(leave empty for default)" style="width: 100%"></td>
+              <td><strong>Enabled</strong></td>
+              <td>
+                <label class="toggle-wrap">
+                  <input type="checkbox" id="provider-enabled-${escapeHtml(provider.id)}" ${enabled ? "checked" : ""}>
+                  <span class="toggle-label">${enabled ? "Active" : "Disabled"}</span>
+                </label>
+              </td>
             </tr>
+            ${!isPiCli && cfg ? `<tr>
+              <td><strong>Base URL Override</strong><br><small style="color:var(--text-muted)">${escapeHtml(cfg.note)}</small></td>
+              <td><input type="text" id="provider-setting-${escapeHtml(provider.id)}-base-url" value="${escapeHtml(baseUrl)}" placeholder="(leave empty for default)" style="width:100%"></td>
+            </tr>` : ""}
           </tbody>
         </table>
       </div>
     </details>`;
   }).join("");
 
-  host.innerHTML = `<div class="policy-groups">${sections}</div>`;
+  host.innerHTML = `<div class="policy-groups">${sections || '<div class="empty">No providers loaded.</div>'}</div>`;
+
+  // Update toggle labels on change
+  allProviders.forEach(provider => {
+    const cb = document.getElementById(`provider-enabled-${provider.id}`);
+    if (cb) {
+      cb.addEventListener("change", () => {
+        const label = cb.nextElementSibling;
+        if (label) label.textContent = cb.checked ? "Active" : "Disabled";
+      });
+    }
+  });
 }
 
 function selectConversation(id) {
@@ -1600,6 +1635,16 @@ function wire() {
   $("#model-policy-table")?.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
+
+    // Pin toggle
+    const pinBtn = target.closest("[data-field='pin']");
+    if (pinBtn) {
+      pinBtn.classList.toggle("pinned");
+      pinBtn.textContent = pinBtn.classList.contains("pinned") ? "📌" : "📍";
+      pinBtn.title = pinBtn.classList.contains("pinned") ? "Unpin" : "Pin to top";
+      return;
+    }
+
     const actionBtn = target.closest("[data-provider-action]");
     if (!actionBtn) return;
     const providerBox = actionBtn.closest(".policy-provider");

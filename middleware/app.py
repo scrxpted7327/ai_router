@@ -175,21 +175,31 @@ def _model_effort_guess(model_id: str) -> str:
 async def _model_control_index() -> tuple[set[str], dict[str, dict[str, str]]]:
     models = reg.list_models()
     model_ids = [m["id"] for m in models]
+    model_provider = {m["id"]: m.get("provider_id", "") for m in models}
     async with SessionLocal() as db:
-        rows = (
+        mc_rows = (
             await db.execute(select(ModelControl).where(ModelControl.model_id.in_(model_ids)))
         ).scalars().all()
-    by_id = {row.model_id: row for row in rows}
+        ps_rows = (await db.execute(select(ProviderSetting))).scalars().all()
+    by_id = {row.model_id: row for row in mc_rows}
+    disabled_providers: set[str] = set()
+    for ps in ps_rows:
+        s = json.loads(ps.settings_json or "{}")
+        if not s.get("enabled", True):
+            disabled_providers.add(ps.provider_id)
     enabled: set[str] = set()
     meta: dict[str, dict[str, str]] = {}
     for model_id in model_ids:
         row = by_id.get(model_id)
+        provider_id = model_provider.get(model_id, "")
         row_enabled = bool(row.enabled) if row else True
-        if row_enabled:
+        provider_enabled = provider_id not in disabled_providers
+        if row_enabled and provider_enabled:
             enabled.add(model_id)
         meta[model_id] = {
             "classification": (row.classification if row else _model_classification_guess(model_id)) or "",
             "effort": (row.effort if row else _model_effort_guess(model_id)) or "default",
+            "pinned": bool(row.pinned) if row else False,
         }
     return enabled, meta
 
@@ -228,6 +238,7 @@ def _policy_pick_for_task(
 
     candidates.sort(
         key=lambda model_id: (
+            0 if meta.get(model_id, {}).get("pinned") else 1,
             _effort_distance(meta.get(model_id, {}).get("effort", "default"), target_effort),
             preferred_pos.get(model_id, 10_000),
             model_id,
@@ -323,6 +334,7 @@ async def get_model_controls(_admin=Depends(require_admin)) -> dict:
             row = ModelControl(
                 model_id=model_id,
                 enabled=True,
+                pinned=False,
                 classification=_model_classification_guess(model_id),
                 effort=_model_effort_guess(model_id),
             )
@@ -341,6 +353,7 @@ async def get_model_controls(_admin=Depends(require_admin)) -> dict:
                 "name": model.get("name") or model["id"],
                 "provider": model.get("owned_by") or "",
                 "enabled": bool(row.enabled),
+                "pinned": bool(row.pinned),
                 "classification": row.classification or "",
                 "effort": row.effort or "default",
             }
@@ -363,6 +376,7 @@ async def set_model_controls(payload: dict, _admin=Depends(require_admin)) -> di
                 continue
 
             enabled = bool(item.get("enabled", True))
+            pinned = bool(item.get("pinned", False))
             classification = str(item.get("classification") or "").strip().lower()
             effort = str(item.get("effort") or "default").strip().lower()
 
@@ -376,6 +390,7 @@ async def set_model_controls(payload: dict, _admin=Depends(require_admin)) -> di
                 row = ModelControl(model_id=model_id)
                 db.add(row)
             row.enabled = enabled
+            row.pinned = pinned
             row.classification = classification
             row.effort = effort
 
@@ -484,6 +499,66 @@ async def set_provider_settings(payload: dict, _admin=Depends(require_admin)) ->
 
             row.settings_json = json.dumps(provider_settings)
 
+        await db.commit()
+
+    return {"ok": True}
+
+
+@app.get("/dashboard/providers")
+async def get_providers(_admin=Depends(require_admin)) -> dict:
+    """List all registry providers with enabled/disabled state."""
+    models = reg.list_models()
+    # Count canonical models per provider
+    provider_counts: dict[str, int] = {}
+    for m in models:
+        pid = m.get("provider_id", "")
+        if pid:
+            provider_counts[pid] = provider_counts.get(pid, 0) + 1
+
+    async with SessionLocal() as db:
+        ps_rows = (await db.execute(select(ProviderSetting))).scalars().all()
+    ps_by_id = {row.provider_id: json.loads(row.settings_json or "{}") for row in ps_rows}
+
+    # Build provider list from registry
+    seen: set[str] = set()
+    providers = []
+    for m in models:
+        pid = m.get("provider_id", "")
+        if not pid or pid in seen:
+            continue
+        seen.add(pid)
+        s = ps_by_id.get(pid, {})
+        providers.append({
+            "id": pid,
+            "label": m.get("owned_by") or pid,
+            "api": m.get("provider_api") or "",
+            "enabled": s.get("enabled", True),
+            "model_count": provider_counts.get(pid, 0),
+        })
+
+    providers.sort(key=lambda p: p["label"].lower())
+    return {"providers": providers}
+
+
+@app.post("/dashboard/providers")
+async def set_providers(payload: dict, _admin=Depends(require_admin)) -> dict:
+    """Enable/disable providers. payload: {providers: {provider_id: {enabled: bool}}}"""
+    updates = payload.get("providers")
+    if not isinstance(updates, dict):
+        raise HTTPException(status_code=400, detail="providers must be a dict")
+
+    async with SessionLocal() as db:
+        for provider_id, settings in updates.items():
+            if not isinstance(settings, dict):
+                continue
+            row = await db.get(ProviderSetting, provider_id)
+            if not row:
+                row = ProviderSetting(provider_id=provider_id, settings_json="{}")
+                db.add(row)
+            existing = json.loads(row.settings_json or "{}")
+            if "enabled" in settings:
+                existing["enabled"] = bool(settings["enabled"])
+            row.settings_json = json.dumps(existing)
         await db.commit()
 
     return {"ok": True}

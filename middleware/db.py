@@ -78,6 +78,7 @@ class ModelControl(Base):
 
     model_id = Column(String, primary_key=True)
     enabled = Column(Boolean, default=True, nullable=False)
+    pinned = Column(Boolean, default=False, nullable=False)
     classification = Column(String, default="", nullable=False)
     effort = Column(String, default="default", nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -196,4 +197,7 @@ async def init_db() -> None:
             await conn.execute(
                 text("ALTER TABLE model_controls ADD COLUMN effort VARCHAR NOT NULL DEFAULT 'default'")
             )
-        # Auto-router table is created by Base.metadata.create_all above
+        if model_control_cols and "pinned" not in model_control_col_names:
+            await conn.execute(
+                text("ALTER TABLE model_controls ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT 0")
+            )
