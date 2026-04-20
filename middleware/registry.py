@@ -195,6 +195,8 @@ class ModelEntry:
 class RegistryState:
     by_canonical_id: dict[str, ModelEntry] = field(default_factory=dict)
     aliases: dict[str, str] = field(default_factory=dict)
+    by_provider_model: dict[str, ModelEntry] = field(default_factory=dict)
+    providers_for_model: dict[str, list[str]] = field(default_factory=dict)
 
 
 def _env(key: str, default: str = "") -> str:
@@ -1286,6 +1288,14 @@ def build_registry() -> RegistryState:
                 options=dict(provider.options),
             )
             state.by_canonical_id[model.model_id] = entry
+
+            provider_key = f"{provider.id}:{model.model_id}"
+            state.by_provider_model[provider_key] = entry
+
+            if model.model_id not in state.providers_for_model:
+                state.providers_for_model[model.model_id] = []
+            state.providers_for_model[model.model_id].append(provider.id)
+
             keys = [model.model_id, f"{provider.id}/{model.model_id}", f"{provider.api}/{model.model_id}", *model.aliases]
             for key in keys:
                 normalised = _normalise_key(key)
@@ -1305,15 +1315,50 @@ def init(env_path: str | None = None) -> None:
     REGISTRY = build_registry()
 
 
-def get(model_name: str) -> ModelEntry | None:
+def get(model_name: str, preferred_provider: str | None = None) -> ModelEntry | None:
     if not model_name:
         return None
-    canonical = REGISTRY.aliases.get(_normalise_key(model_name), model_name)
-    return REGISTRY.by_canonical_id.get(canonical) or REGISTRY.by_canonical_id.get(_normalise_key(canonical))
+
+    normalised = _normalise_key(model_name)
+
+    canonical = REGISTRY.aliases.get(normalised, model_name)
+    entry = REGISTRY.by_canonical_id.get(canonical) or REGISTRY.by_canonical_id.get(_normalise_key(canonical))
+
+    if "/" in model_name:
+        parts = model_name.split("/", 1)
+        provider_key = _normalise_key(f"{parts[0]}:{parts[1]}")
+        provider_entry = REGISTRY.by_provider_model.get(provider_key)
+        if provider_entry:
+            if not entry or entry.provider_id != parts[0]:
+                entry = provider_entry
+
+    if preferred_provider and entry:
+        pkey = _normalise_key(f"{preferred_provider}:{entry.model_id}")
+        preferred_entry = REGISTRY.by_provider_model.get(pkey)
+        if preferred_entry:
+            return preferred_entry
+
+    return entry
+
+
+def get_providers_for_model(model_id: str) -> list[str]:
+    providers = REGISTRY.providers_for_model.get(model_id)
+    if providers:
+        return providers
+    canonical = REGISTRY.aliases.get(_normalise_key(model_id))
+    if canonical:
+        return REGISTRY.providers_for_model.get(canonical, [])
+    return []
+
+
+def get_from_provider(provider_id: str, model_id: str) -> ModelEntry | None:
+    key = f"{provider_id}:{model_id}"
+    return REGISTRY.by_provider_model.get(key) or REGISTRY.by_provider_model.get(_normalise_key(key))
 
 
 def list_models() -> list[dict]:
     out: list[dict] = []
+    seen: set[str] = set()
     for model_id, entry in sorted(REGISTRY.by_canonical_id.items(), key=lambda item: item[0]):
         out.append(
             {
@@ -1329,6 +1374,32 @@ def list_models() -> list[dict]:
                 "max_tokens": entry.max_tokens,
                 "aliases": list(entry.aliases),
                 "primary": True,
+                "providers": REGISTRY.providers_for_model.get(model_id, []),
+            }
+        )
+        seen.add(f"{entry.provider_id}:{model_id}")
+    for key, entry in sorted(REGISTRY.by_provider_model.items(), key=lambda item: item[0]):
+        if key in seen:
+            continue
+        provider_id, _, bare_model_id = key.partition(":")
+        if bare_model_id in REGISTRY.by_canonical_id and provider_id == REGISTRY.by_canonical_id[bare_model_id].provider_id:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "id": f"{provider_id}/{bare_model_id}",
+                "object": "model",
+                "owned_by": entry.provider_label or entry.provider_id or entry.provider,
+                "provider_api": entry.provider,
+                "provider_id": entry.provider_id or entry.provider,
+                "name": entry.name,
+                "reasoning": entry.reasoning,
+                "vision": entry.vision,
+                "context_window": entry.context_window,
+                "max_tokens": entry.max_tokens,
+                "aliases": list(entry.aliases),
+                "primary": False,
+                "providers": [provider_id],
             }
         )
     return out

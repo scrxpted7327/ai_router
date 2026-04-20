@@ -23,8 +23,8 @@ def test_registry_lists_canonical_models_once_and_resolves_aliases(monkeypatch) 
     state = registry.build_registry()
     ids = list(state.by_canonical_id.keys())
 
-    assert ids.count("claude-sonnet-4-5") == 1
-    assert state.aliases["claude"] == "claude-sonnet-4-5"
+    assert ids.count("claude-sonnet-4-6") == 1
+    assert state.aliases["claude"] == "claude-sonnet-4-6"
     assert state.aliases["github-copilot"] == "gpt-4o"
 
 
@@ -61,6 +61,7 @@ def test_handle_allows_bedrock_without_api_key(monkeypatch) -> None:
         provider_id="amazon-bedrock",
         model_id="us.anthropic.claude-3-5-sonnet-20241022-v2:0",
         api_key="",
+        base_url=None,
         options={"region": "us-east-1"},
     )
     monkeypatch.setattr(app_module, "_model_control_index", lambda: asyncio.sleep(0, result=({entry.model_id}, {})))

@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text, UniqueConstraint, func, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -37,6 +37,7 @@ class User(Base):
     conversations   = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
     gateway_tokens  = relationship("GatewayApiToken", back_populates="user", cascade="all, delete-orphan")
     provider_tokens = relationship("UserProviderToken", back_populates="user", cascade="all, delete-orphan")
+    routing_preference = relationship("UserRoutingPreference", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 
 class UserProviderToken(Base):
@@ -102,6 +103,58 @@ class ProviderSetting(Base):
     provider_id = Column(String, primary_key=True)  # e.g. "opencode", "github-copilot"
     settings_json = Column(Text, default="{}", nullable=False)  # JSON object of settings
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class UserRoutingPreference(Base):
+    """Per-user routing preferences and provider priorities."""
+
+    __tablename__ = "user_routing_preferences"
+
+    user_id          = Column(String, ForeignKey("users.id"), primary_key=True)
+    preferred_models = Column(Text, default="{}", nullable=False)
+    avoid_models     = Column(Text, default="[]", nullable=False)
+    tier_overrides   = Column(Text, default="{}", nullable=False)
+    provider_priority = Column(Text, default="[]", nullable=False)
+    enabled          = Column(Boolean, default=True, nullable=False)
+    created_at       = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at       = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User", back_populates="routing_preference")
+
+
+class RouteAnalytics(Base):
+    """Track every routing decision for analytics and debugging."""
+
+    __tablename__ = "route_analytics"
+
+    id                      = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id                 = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    requested_model         = Column(String, nullable=False, index=True)
+    task_type               = Column(String, default="", index=True)
+    selected_model          = Column(String, nullable=False, index=True)
+    selected_provider       = Column(String, default="")
+    tier                    = Column(String, default="")
+    user_preference_applied = Column(Boolean, default=False)
+    fallback_count          = Column(Integer, default=0)
+    timestamp               = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    user = relationship("User")
+
+
+class AutoRouterConfigHistory(Base):
+    """Audit trail for auto-router configuration changes."""
+
+    __tablename__ = "auto_router_config_history"
+
+    id         = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    config_id  = Column(String, nullable=False, index=True)
+    tier       = Column(String, nullable=False)
+    task_type  = Column(String, nullable=False)
+    model_ids  = Column(Text, default="[]", nullable=False)
+    changed_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    timestamp  = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    user = relationship("User")
 
 
 class Session(Base):

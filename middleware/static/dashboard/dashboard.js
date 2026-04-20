@@ -32,6 +32,8 @@ const state = {
   modelControls: null,
   autoRouterConfig: null,
   providerSettings: null,
+  routingAnalytics: null,
+  routingHistory: null,
   providerTokens: [],       // [{provider_id, token_prefix, updated_at}]
   adminUsers: null,
   adminSelectedUser: null,
@@ -392,6 +394,278 @@ async function saveProviderSettings() {
   }
 }
 
+// ── Routing: validation, test, analytics, history, import/export ─────────────
+
+async function validateAutoRouterModels() {
+  const allIds = [];
+  const tiers = ["auto-free", "auto-premium", "auto-max"];
+  const taskTypes = ["heavy_reasoning", "code_generation", "nuanced_coding", "multimodal", "fast_simple"];
+  for (const tier of tiers) {
+    for (const task of taskTypes) {
+      const input = document.getElementById(`auto-router-${tier}-${task}`);
+      if (!input) continue;
+      const ids = input.value.split(",").map(s => s.trim()).filter(Boolean);
+      allIds.push(...ids);
+    }
+  }
+  if (!allIds.length) return;
+  const unique = [...new Set(allIds)];
+  const r = await api("/api/routing/validate", {
+    method: "POST",
+    body: JSON.stringify({ model_ids: unique }),
+  });
+  const data = await r.json().catch(() => ({}));
+  const host = document.getElementById("auto-router-validation");
+  if (!host) return;
+  if (!data.invalid?.length && !data.warnings?.length) {
+    host.innerHTML = `<div class="msg ok">All ${data.valid?.length || 0} model IDs are valid.</div>`;
+  } else {
+    const parts = [];
+    if (data.invalid?.length) parts.push(`<div class="msg error">Invalid: ${data.invalid.map(escapeHtml).join(", ")}</div>`);
+    if (data.warnings?.length) parts.push(`<div class="msg warn">${data.warnings.map(escapeHtml).join("<br>")}</div>`);
+    if (data.valid?.length) parts.push(`<div class="msg ok">${data.valid.length} valid</div>`);
+    host.innerHTML = parts.join("");
+  }
+  host.classList.remove("hidden");
+}
+
+async function testRouting() {
+  const taskType = document.getElementById("test-task-type")?.value;
+  const tier = document.getElementById("test-tier")?.value;
+  if (!taskType || !tier) return;
+  const r = await api("/api/routing/preview", {
+    method: "POST",
+    body: JSON.stringify({ task_type: taskType, tier: `scrxpted/${tier}` }),
+  });
+  const data = await r.json().catch(() => ({}));
+  const host = document.getElementById("test-routing-result");
+  if (!host) return;
+  if (data.selected_model) {
+    host.innerHTML = `<div class="msg ok">Would route to: <strong>${escapeHtml(data.selected_model)}</strong> via <em>${escapeHtml(data.provider || "unknown")}</em></div>`;
+  } else {
+    host.innerHTML = `<div class="msg error">No model matched for ${escapeHtml(tier)} / ${escapeHtml(taskType)}</div>`;
+  }
+  host.classList.remove("hidden");
+}
+
+async function fetchRoutingAnalytics() {
+  if (!state.user?.is_admin) { state.routingAnalytics = null; return; }
+  const r = await api("/api/routing/analytics?days=7");
+  state.routingAnalytics = r.ok ? await r.json() : null;
+}
+
+async function fetchRoutingHistory() {
+  if (!state.user?.is_admin) { state.routingHistory = null; return; }
+  const r = await api("/api/routing/history?limit=50");
+  const data = r.ok ? await r.json() : {};
+  state.routingHistory = data.history || [];
+}
+
+function renderRoutingAnalytics() {
+  const host = document.getElementById("routing-analytics-content");
+  if (!host) return;
+  const data = state.routingAnalytics;
+  if (!data) {
+    host.innerHTML = '<div class="empty">No analytics data.</div>';
+    return;
+  }
+  if (data.total === 0) {
+    host.innerHTML = '<div class="empty">No routing decisions recorded yet.</div>';
+    return;
+  }
+
+  const tierRows = Object.entries(data.tier_distribution || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([tier, count]) => `<tr><td>${escapeHtml(tier)}</td><td class="mono">${count}</td><td>${(count / data.total * 100).toFixed(1)}%</td></tr>`)
+    .join("");
+
+  const taskRows = Object.entries(data.task_distribution || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([task, count]) => `<tr><td>${escapeHtml(task)}</td><td class="mono">${count}</td><td>${(count / data.total * 100).toFixed(1)}%</td></tr>`)
+    .join("");
+
+  const modelRows = Object.entries(data.top_models || {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([model, count]) => `<tr><td class="mono">${escapeHtml(model)}</td><td class="mono">${count}</td></tr>`)
+    .join("");
+
+  const providerRows = Object.entries(data.provider_distribution || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([provider, count]) => `<tr><td>${escapeHtml(provider)}</td><td class="mono">${count}</td><td>${(count / data.total * 100).toFixed(1)}%</td></tr>`)
+    .join("");
+
+  host.innerHTML = `
+    <div class="grid-stats" style="margin-bottom:1rem">
+      <div class="card"><h3>Total Routes</h3><div class="value">${data.total}</div><div class="sub">Last ${data.period_days} days</div></div>
+      <div class="card"><h3>User Pref Rate</h3><div class="value">${data.user_preference_rate}%</div><div class="sub">Routes using user preferences</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+      <div>
+        <h3 style="margin:0 0 .5rem">By Tier</h3>
+        <div class="table-wrap"><table><thead><tr><th>Tier</th><th>Count</th><th>%</th></tr></thead><tbody>${tierRows}</tbody></table></div>
+      </div>
+      <div>
+        <h3 style="margin:0 0 .5rem">By Task Type</h3>
+        <div class="table-wrap"><table><thead><tr><th>Task</th><th>Count</th><th>%</th></tr></thead><tbody>${taskRows}</tbody></table></div>
+      </div>
+      <div>
+        <h3 style="margin:0 0 .5rem">Top Models</h3>
+        <div class="table-wrap"><table><thead><tr><th>Model</th><th>Count</th></tr></thead><tbody>${modelRows}</tbody></table></div>
+      </div>
+      <div>
+        <h3 style="margin:0 0 .5rem">By Provider</h3>
+        <div class="table-wrap"><table><thead><tr><th>Provider</th><th>Count</th><th>%</th></tr></thead><tbody>${providerRows}</tbody></table></div>
+      </div>
+    </div>`;
+}
+
+function renderRoutingHistory() {
+  const host = document.getElementById("routing-history-content");
+  if (!host) return;
+  const rows = state.routingHistory;
+  if (!rows?.length) {
+    host.innerHTML = '<div class="empty">No configuration changes recorded.</div>';
+    return;
+  }
+  const tableRows = rows.map(r => {
+    const models = (r.model_ids || []).join(", ");
+    const ts = r.timestamp ? new Date(r.timestamp).toLocaleString() : "—";
+    return `<tr>
+      <td class="mono">${escapeHtml(ts)}</td>
+      <td>${escapeHtml(r.tier || "")}</td>
+      <td>${escapeHtml(r.task_type || "")}</td>
+      <td class="mono" style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(models)}</td>
+    </tr>`;
+  }).join("");
+  host.innerHTML = `<div class="table-wrap"><table>
+    <thead><tr><th>Time</th><th>Tier</th><th>Task Type</th><th>Models</th></tr></thead>
+    <tbody>${tableRows}</tbody>
+  </table></div>`;
+}
+
+async function exportRoutingConfig() {
+  const r = await api("/api/routing/export");
+  if (!r.ok) throw new Error("Export failed");
+  const data = await r.json();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "auto-router-config.json";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function importRoutingConfig() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".json";
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const r = await api("/api/routing/import", {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+      const result = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(result.detail || "Import failed");
+      await fetchAutoRouterConfig();
+      renderAutoRouterConfig();
+      showTerminalStatus(`Imported ${result.imported || 0} config(s)`, "ok");
+    } catch (err) {
+      showTerminalStatus(String(err.message || err), "error");
+    }
+  });
+  input.click();
+}
+
+// ── User routing preferences ─────────────────────────────────────────────────
+
+async function fetchMyRoutingPreferences() {
+  if (!state.user) return;
+  const r = await api("/api/routing/preferences");
+  if (!r.ok) return;
+  const data = await r.json();
+  populateMyRoutingForm(data);
+}
+
+function populateMyRoutingForm(data) {
+  const taskTypes = ["heavy_reasoning", "code_generation", "nuanced_coding", "multimodal", "fast_simple"];
+  const tiers = ["auto-free", "auto-premium", "auto-max"];
+
+  const pp = document.getElementById("pref-provider-priority");
+  if (pp) pp.value = (data.provider_priority || []).join(", ");
+
+  const preferred = data.preferred_models || {};
+  for (const task of taskTypes) {
+    const input = document.getElementById(`pref-${task}`);
+    if (input) input.value = (preferred[task] || []).join(", ");
+  }
+
+  const tierOverrides = data.tier_overrides || {};
+  for (const tier of tiers) {
+    const input = document.getElementById(`pref-tier-${tier}`);
+    if (input) input.value = tierOverrides[tier] || "";
+  }
+
+  const avoid = document.getElementById("pref-avoid-models");
+  if (avoid) avoid.value = (data.avoid_models || []).join(", ");
+
+  const enabled = document.getElementById("pref-enabled");
+  if (enabled) enabled.checked = data.enabled !== false;
+}
+
+function collectMyRoutingForm() {
+  const taskTypes = ["heavy_reasoning", "code_generation", "nuanced_coding", "multimodal", "fast_simple"];
+  const tiers = ["auto-free", "auto-premium", "auto-max"];
+
+  const pp = document.getElementById("pref-provider-priority");
+  const providerPriority = pp ? pp.value.split(",").map(s => s.trim()).filter(Boolean) : [];
+
+  const preferredModels = {};
+  for (const task of taskTypes) {
+    const input = document.getElementById(`pref-${task}`);
+    if (input && input.value.trim()) {
+      preferredModels[task] = input.value.split(",").map(s => s.trim()).filter(Boolean);
+    }
+  }
+
+  const tierOverrides = {};
+  for (const tier of tiers) {
+    const input = document.getElementById(`pref-tier-${tier}`);
+    if (input && input.value.trim()) {
+      tierOverrides[tier] = input.value.trim();
+    }
+  }
+
+  const avoid = document.getElementById("pref-avoid-models");
+  const avoidModels = avoid ? avoid.value.split(",").map(s => s.trim()).filter(Boolean) : [];
+
+  const enabled = document.getElementById("pref-enabled");
+
+  return {
+    preferred_models: preferredModels,
+    avoid_models: avoidModels,
+    tier_overrides: tierOverrides,
+    provider_priority: providerPriority,
+    enabled: enabled ? enabled.checked : true,
+  };
+}
+
+async function saveMyRoutingPreferences() {
+  const prefs = collectMyRoutingForm();
+  const r = await api("/api/routing/preferences", {
+    method: "PUT",
+    body: JSON.stringify(prefs),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || "Failed to save preferences");
+}
+
 function showAuthGate() {
   $("#view-gate").classList.remove("hidden");
   $("#view-app").classList.add("hidden");
@@ -714,6 +988,8 @@ function renderAutoRouterConfig() {
     { id: "fast_simple", label: "Fast/Simple" },
   ];
 
+  const modelOptions = (state.models?.data || []).map(m => `<option value="${escapeHtml(m.id)}">`).join("");
+
   const configs = state.autoRouterConfig || {};
 
   const tierSections = tiers.map(tier => {
@@ -723,7 +999,7 @@ function renderAutoRouterConfig() {
       const value = modelIds.join(", ");
       return `<tr>
         <td><strong>${escapeHtml(task.label)}</strong></td>
-        <td><input type="text" id="auto-router-${tier.id}-${task.id}" value="${escapeHtml(value)}" placeholder="model-id-1, model-id-2, ..." style="width: 100%"></td>
+        <td><input type="text" id="auto-router-${tier.id}-${task.id}" value="${escapeHtml(value)}" placeholder="model-id-1, provider/model-id, ..." list="model-datalist" style="width: 100%"></td>
       </tr>`;
     }).join("");
 
@@ -737,7 +1013,7 @@ function renderAutoRouterConfig() {
       <div class="table-wrap">
         <table class="policy-table">
           <thead>
-            <tr><th>Task Type</th><th>Model IDs (comma-separated, priority order)</th></tr>
+            <tr><th>Task Type</th><th>Model IDs (comma-separated, priority order — use provider/model for specific provider)</th></tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
@@ -745,7 +1021,61 @@ function renderAutoRouterConfig() {
     </details>`;
   }).join("");
 
-  host.innerHTML = `<div class="policy-groups">${tierSections}</div>`;
+  const toolsSection = `
+    <datalist id="model-datalist">${modelOptions}</datalist>
+    <div style="display:flex;gap:.5rem;margin:1rem 0;flex-wrap:wrap">
+      <button type="button" class="btn" id="btn-validate-models">Validate Model IDs</button>
+      <button type="button" class="btn" id="btn-export-config">Export Config</button>
+      <button type="button" class="btn" id="btn-import-config">Import Config</button>
+    </div>
+    <div id="auto-router-validation" class="hidden" style="margin-bottom:1rem"></div>
+
+    <details class="policy-provider" style="margin-top:1rem">
+      <summary>
+        <div class="provider-head">
+          <span class="provider-title">Test Routing</span>
+          <span class="provider-meta">Preview routing decisions</span>
+        </div>
+      </summary>
+      <div style="padding:1rem;display:flex;gap:.75rem;align-items:flex-end;flex-wrap:wrap">
+        <div>
+          <label style="font-size:.8rem;color:var(--text-muted)">Task Type</label>
+          <select id="test-task-type" style="display:block;margin-top:.25rem">
+            ${taskTypes.map(t => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:.8rem;color:var(--text-muted)">Tier</label>
+          <select id="test-tier" style="display:block;margin-top:.25rem">
+            ${tiers.map(t => `<option value="${t.id}">${escapeHtml(t.label)}</option>`).join("")}
+          </select>
+        </div>
+        <button type="button" class="btn btn-primary" id="btn-test-routing">Test</button>
+      </div>
+      <div id="test-routing-result" class="hidden" style="padding:0 1rem 1rem"></div>
+    </details>
+
+    <details class="policy-provider" style="margin-top:1rem">
+      <summary>
+        <div class="provider-head">
+          <span class="provider-title">Routing Analytics</span>
+          <span class="provider-meta">Last 7 days</span>
+        </div>
+      </summary>
+      <div id="routing-analytics-content" style="padding:1rem"><div class="empty">Click to load analytics.</div></div>
+    </details>
+
+    <details class="policy-provider" style="margin-top:1rem">
+      <summary>
+        <div class="provider-head">
+          <span class="provider-title">Config History</span>
+          <span class="provider-meta">Audit trail</span>
+        </div>
+      </summary>
+      <div id="routing-history-content" style="padding:1rem"><div class="empty">Click to load history.</div></div>
+    </details>`;
+
+  host.innerHTML = `<div class="policy-groups">${tierSections}</div>${toolsSection}`;
 }
 
 function renderProviderSettings() {
@@ -981,6 +1311,7 @@ async function setTab(name) {
       memory: "Memory",
       connect: "Connect",
       tokens: "API Keys",
+      "my-routing": "My Routing",
       users: "Users",
       auth: "Auth",
       terminal: "Terminal",
@@ -997,6 +1328,9 @@ async function setTab(name) {
   if (name === "tokens") {
     await fetchProviderTokens();
     renderProviderTokens("provider-tokens-grid", state.providerTokens, null);
+  }
+  if (name === "my-routing") {
+    await fetchMyRoutingPreferences();
   }
   if (name === "users") {
     await fetchAdminUsers();
@@ -1197,6 +1531,44 @@ function wire() {
       showTerminalStatus(String(err.message || err), "error");
     }
   });
+
+  document.getElementById("btn-save-my-routing")?.addEventListener("click", async () => {
+    const msg = document.getElementById("my-routing-msg");
+    try {
+      await saveMyRoutingPreferences();
+      if (msg) { msg.textContent = "Preferences saved"; msg.className = "msg ok"; msg.classList.remove("hidden"); setTimeout(() => msg.classList.add("hidden"), 3000); }
+    } catch (err) {
+      if (msg) { msg.textContent = String(err.message || err); msg.className = "msg error"; msg.classList.remove("hidden"); }
+    }
+  });
+
+  document.addEventListener("click", (e) => {
+    if (e.target.id === "btn-validate-models") {
+      validateAutoRouterModels().catch(err => showTerminalStatus(String(err.message || err), "error"));
+    }
+    if (e.target.id === "btn-test-routing") {
+      testRouting().catch(err => showTerminalStatus(String(err.message || err), "error"));
+    }
+    if (e.target.id === "btn-export-config") {
+      exportRoutingConfig().catch(err => showTerminalStatus(String(err.message || err), "error"));
+    }
+    if (e.target.id === "btn-import-config") {
+      importRoutingConfig().catch(err => showTerminalStatus(String(err.message || err), "error"));
+    }
+  });
+
+  document.addEventListener("toggle", (e) => {
+    const details = e.target;
+    if (!(details instanceof HTMLDetailsElement) || !details.open) return;
+    const analyticsHost = details.querySelector("#routing-analytics-content");
+    if (analyticsHost) {
+      fetchRoutingAnalytics().then(renderRoutingAnalytics);
+    }
+    const historyHost = details.querySelector("#routing-history-content");
+    if (historyHost) {
+      fetchRoutingHistory().then(renderRoutingHistory);
+    }
+  }, true);
   $("#btn-provider-settings-save")?.addEventListener("click", async () => {
     try {
       await saveProviderSettings();

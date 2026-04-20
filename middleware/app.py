@@ -22,7 +22,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -38,7 +38,10 @@ from . import registry as reg
 from .anthropic_proxy import router as anthropic_router
 from .auth import COOKIE_NAME, require_admin, require_whitelisted, router as auth_router
 from .compactor import compact, needs_compaction
-from .db import AutoRouterConfig, ModelControl, ProviderSetting, Session, SessionLocal, User, init_db
+from .db import (
+    AutoRouterConfig, AutoRouterConfigHistory, ModelControl, ProviderSetting,
+    RouteAnalytics, Session, SessionLocal, User, UserRoutingPreference, init_db,
+)
 from .format_adapter import normalise_request, stream_as_responses_api
 from .router import route
 from .providers import anthropic as anthropic_provider
@@ -406,7 +409,7 @@ async def get_auto_router_config(_admin=Depends(require_admin)) -> dict:
 
 
 @app.post("/dashboard/auto-router-config")
-async def set_auto_router_config(payload: dict, _admin=Depends(require_admin)) -> dict:
+async def set_auto_router_config(payload: dict, admin=Depends(require_admin)) -> dict:
     """Set auto-router configuration. payload: {configs: {tier: {task_type: [model_ids]}}}"""
     configs = payload.get("configs")
     if not isinstance(configs, dict):
@@ -430,6 +433,14 @@ async def set_auto_router_config(payload: dict, _admin=Depends(require_admin)) -
                     db.add(row)
 
                 row.model_ids = json.dumps(model_ids)
+
+                db.add(AutoRouterConfigHistory(
+                    config_id=config_id,
+                    tier=tier,
+                    task_type=task_type,
+                    model_ids=json.dumps(model_ids),
+                    changed_by=admin.id if admin else None,
+                ))
 
         await db.commit()
 
@@ -474,6 +485,242 @@ async def set_provider_settings(payload: dict, _admin=Depends(require_admin)) ->
         await db.commit()
 
     return {"ok": True}
+
+
+# ── Routing: preferences, preview, validation, analytics, import/export ──────
+
+@app.get("/api/routing/preferences")
+async def get_routing_preferences(user=Depends(require_whitelisted)) -> dict:
+    async with SessionLocal() as db:
+        pref = (
+            await db.execute(
+                select(UserRoutingPreference).where(UserRoutingPreference.user_id == user.id)
+            )
+        ).scalars().first()
+    if not pref:
+        return {
+            "preferred_models": {},
+            "avoid_models": [],
+            "tier_overrides": {},
+            "provider_priority": [],
+            "enabled": True,
+        }
+    def _safe_json(raw: str | None, default):
+        try:
+            return json.loads(raw or "") if raw else default
+        except (json.JSONDecodeError, TypeError):
+            return default
+
+    return {
+        "preferred_models": _safe_json(pref.preferred_models, {}),
+        "avoid_models": _safe_json(pref.avoid_models, []),
+        "tier_overrides": _safe_json(pref.tier_overrides, {}),
+        "provider_priority": _safe_json(pref.provider_priority, []),
+        "enabled": pref.enabled,
+    }
+
+
+@app.put("/api/routing/preferences")
+async def update_routing_preferences(payload: dict, user=Depends(require_whitelisted)) -> dict:
+    preferred_models = payload.get("preferred_models", {})
+    avoid_models = payload.get("avoid_models", [])
+    tier_overrides = payload.get("tier_overrides", {})
+    provider_priority = payload.get("provider_priority", [])
+    enabled = payload.get("enabled", True)
+
+    if not isinstance(preferred_models, dict):
+        raise HTTPException(status_code=400, detail="preferred_models must be a dict")
+    if not isinstance(avoid_models, list):
+        raise HTTPException(status_code=400, detail="avoid_models must be a list")
+    if not isinstance(tier_overrides, dict):
+        raise HTTPException(status_code=400, detail="tier_overrides must be a dict")
+    if not isinstance(provider_priority, list):
+        raise HTTPException(status_code=400, detail="provider_priority must be a list")
+
+    async with SessionLocal() as db:
+        pref = (
+            await db.execute(
+                select(UserRoutingPreference).where(UserRoutingPreference.user_id == user.id)
+            )
+        ).scalars().first()
+        if not pref:
+            pref = UserRoutingPreference(user_id=user.id)
+            db.add(pref)
+        pref.preferred_models = json.dumps(preferred_models)
+        pref.avoid_models = json.dumps(avoid_models)
+        pref.tier_overrides = json.dumps(tier_overrides)
+        pref.provider_priority = json.dumps(provider_priority)
+        pref.enabled = bool(enabled)
+        await db.commit()
+
+    return {"ok": True}
+
+
+@app.post("/api/routing/preview")
+async def preview_routing(payload: dict, user=Depends(require_whitelisted)) -> dict:
+    task_type = str(payload.get("task_type", "nuanced_coding")).strip()
+    tier = str(payload.get("tier", "scrxpted/auto-premium")).strip()
+    if task_type not in ALLOWED_CLASSIFICATIONS or not task_type:
+        raise HTTPException(status_code=400, detail=f"Invalid task_type: {task_type}")
+
+    enabled, _meta = await _model_control_index()
+    model_id = await _auto_route_model(tier, task_type, enabled, user=user)
+    if not model_id:
+        return {"selected_model": None, "provider": None, "reason": "no_match"}
+
+    entry = reg.get(model_id)
+    return {
+        "selected_model": model_id,
+        "provider": entry.provider_id if entry else None,
+        "reason": "routed",
+    }
+
+
+@app.post("/api/routing/validate")
+async def validate_model_ids(payload: dict, _admin=Depends(require_admin)) -> dict:
+    model_ids = payload.get("model_ids", [])
+    if not isinstance(model_ids, list):
+        raise HTTPException(status_code=400, detail="model_ids must be a list")
+
+    valid, invalid, warnings = [], [], []
+    for mid in model_ids:
+        mid = str(mid).strip()
+        if not mid:
+            continue
+        entry = reg.get(mid)
+        if entry:
+            valid.append({"id": mid, "resolved": entry.model_id, "provider": entry.provider_id})
+        else:
+            invalid.append(mid)
+            if "/" in mid:
+                parts = mid.split("/", 1)
+                bare_entry = reg.get(parts[1])
+                if bare_entry:
+                    warnings.append(
+                        f"'{mid}' not found, but '{parts[1]}' exists via {bare_entry.provider_id}"
+                    )
+    return {"valid": valid, "invalid": invalid, "warnings": warnings}
+
+
+@app.get("/api/routing/analytics")
+async def get_routing_analytics(
+    _admin=Depends(require_admin),
+    days: int = 7,
+    task_type: str | None = None,
+) -> dict:
+    from sqlalchemy import func as sqfunc
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    async with SessionLocal() as db:
+        q = select(RouteAnalytics).where(RouteAnalytics.timestamp >= cutoff)
+        if task_type:
+            q = q.where(RouteAnalytics.task_type == task_type)
+        rows = (await db.execute(q.order_by(RouteAnalytics.timestamp.desc()).limit(5000))).scalars().all()
+
+    tier_counts: dict[str, int] = {}
+    task_counts: dict[str, int] = {}
+    model_counts: dict[str, int] = {}
+    provider_counts: dict[str, int] = {}
+    user_pref_count = 0
+
+    for r in rows:
+        tier_counts[r.tier or "direct"] = tier_counts.get(r.tier or "direct", 0) + 1
+        task_counts[r.task_type or "unknown"] = task_counts.get(r.task_type or "unknown", 0) + 1
+        model_counts[r.selected_model] = model_counts.get(r.selected_model, 0) + 1
+        provider_counts[r.selected_provider or "unknown"] = provider_counts.get(r.selected_provider or "unknown", 0) + 1
+        if r.user_preference_applied:
+            user_pref_count += 1
+
+    return {
+        "total": len(rows),
+        "period_days": days,
+        "tier_distribution": tier_counts,
+        "task_distribution": task_counts,
+        "top_models": dict(sorted(model_counts.items(), key=lambda x: -x[1])[:20]),
+        "provider_distribution": provider_counts,
+        "user_preference_rate": round(user_pref_count / max(len(rows), 1) * 100, 1),
+    }
+
+
+@app.get("/api/routing/history")
+async def get_routing_history(_admin=Depends(require_admin), limit: int = 50) -> dict:
+    async with SessionLocal() as db:
+        rows = (
+            await db.execute(
+                select(AutoRouterConfigHistory)
+                .order_by(AutoRouterConfigHistory.timestamp.desc())
+                .limit(min(limit, 200))
+            )
+        ).scalars().all()
+
+    return {
+        "history": [
+            {
+                "id": r.id,
+                "config_id": r.config_id,
+                "tier": r.tier,
+                "task_type": r.task_type,
+                "model_ids": json.loads(r.model_ids or "[]"),
+                "changed_by": r.changed_by,
+                "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.get("/api/routing/export")
+async def export_routing_config(_admin=Depends(require_admin)) -> dict:
+    async with SessionLocal() as db:
+        configs = (await db.execute(select(AutoRouterConfig))).scalars().all()
+    result = {}
+    for c in configs:
+        result[c.id] = {
+            "tier": c.tier,
+            "task_type": c.task_type,
+            "model_ids": json.loads(c.model_ids or "[]"),
+        }
+    return {"configs": result}
+
+
+@app.post("/api/routing/import")
+async def import_routing_config(payload: dict, admin=Depends(require_admin)) -> dict:
+    configs = payload.get("configs")
+    if not isinstance(configs, dict):
+        raise HTTPException(status_code=400, detail="configs must be a dict")
+
+    imported = 0
+    async with SessionLocal() as db:
+        for config_id, data in configs.items():
+            if not isinstance(data, dict):
+                continue
+            tier = str(data.get("tier", "")).strip()
+            task_type = str(data.get("task_type", "")).strip()
+            model_ids = data.get("model_ids", [])
+            if not tier or not task_type or not isinstance(model_ids, list):
+                continue
+
+            row = (
+                await db.execute(select(AutoRouterConfig).where(AutoRouterConfig.id == config_id))
+            ).scalars().first()
+            if not row:
+                row = AutoRouterConfig(id=config_id, tier=tier, task_type=task_type)
+                db.add(row)
+            row.model_ids = json.dumps(model_ids)
+
+            db.add(AutoRouterConfigHistory(
+                config_id=config_id,
+                tier=tier,
+                task_type=task_type,
+                model_ids=json.dumps(model_ids),
+                changed_by=admin.id if admin else None,
+            ))
+            imported += 1
+
+        await db.commit()
+
+    return {"ok": True, "imported": imported}
 
 
 # ── Admin: user + provider-token management ───────────────────────────────────
@@ -665,9 +912,64 @@ async def chat_completions(request: Request, user=Depends(require_whitelisted)) 
 
 # ── Core dispatch ─────────────────────────────────────────────────────────────
 
-async def _auto_route_model(requested: str, task_type: str, enabled: set[str]) -> str | None:
+def _resolve_with_provider_priority(
+    model_name: str,
+    provider_priority: list[str],
+    enabled: set[str],
+) -> str | None:
+    if not model_name or not isinstance(model_name, str):
+        return None
+
+    if "/" in model_name:
+        entry = reg.get(model_name)
+        if entry and entry.model_id in enabled:
+            return entry.model_id
+
+    for provider_id in provider_priority:
+        if not provider_id:
+            continue
+        entry = reg.get_from_provider(provider_id, model_name)
+        if entry and entry.model_id in enabled:
+            return entry.model_id
+
+    entry = reg.get(model_name)
+    return entry.model_id if entry and entry.model_id in enabled else None
+
+
+async def _log_route_analytics(
+    user_id: str | None,
+    requested_model: str,
+    task_type: str,
+    selected_model: str,
+    selected_provider: str,
+    tier: str,
+    user_preference_applied: bool,
+    fallback_count: int = 0,
+) -> None:
+    try:
+        async with SessionLocal() as db:
+            db.add(RouteAnalytics(
+                user_id=user_id,
+                requested_model=requested_model,
+                task_type=task_type,
+                selected_model=selected_model,
+                selected_provider=selected_provider,
+                tier=tier,
+                user_preference_applied=user_preference_applied,
+                fallback_count=fallback_count,
+            ))
+            await db.commit()
+    except Exception:
+        log.debug("Failed to log route analytics", exc_info=True)
+
+
+async def _auto_route_model(
+    requested: str,
+    task_type: str,
+    enabled: set[str],
+    user: User | None = None,
+) -> str | None:
     """Route auto-free/premium/max to actual models based on task classification."""
-    # Hardcoded fallback defaults
     AUTO_FREE_ROUTES = {
         "heavy_reasoning": ["deepseek-r1", "qwq-groq", "free"],
         "code_generation": ["deepseek-chat", "qwen", "free"],
@@ -699,10 +1001,52 @@ async def _auto_route_model(requested: str, task_type: str, enabled: set[str]) -
         "auto-max": AUTO_MAX_ROUTES,
     }
 
-    # Extract tier from requested model
-    tier = requested.replace("scrxpted/", "")  # Normalize to "auto-free", "auto-premium", "auto-max"
+    tier = requested.replace("scrxpted/", "")
 
-    # Try database configuration first
+    # Priority 1: User routing preferences
+    if user:
+        async with SessionLocal() as db:
+            pref = (
+                await db.execute(
+                    select(UserRoutingPreference).where(UserRoutingPreference.user_id == user.id)
+                )
+            ).scalars().first()
+
+        if pref and pref.enabled:
+            try:
+                avoid = set(json.loads(pref.avoid_models or "[]"))
+                provider_priority = json.loads(pref.provider_priority or "[]")
+                tier_overrides = json.loads(pref.tier_overrides or "{}")
+                preferred_models = json.loads(pref.preferred_models or "{}")
+            except (json.JSONDecodeError, TypeError):
+                avoid, provider_priority, tier_overrides, preferred_models = set(), [], {}, {}
+
+            if tier in tier_overrides:
+                override = tier_overrides[tier]
+                if override and isinstance(override, str):
+                    resolved = _resolve_with_provider_priority(override, provider_priority, enabled)
+                    if resolved and resolved not in avoid:
+                        entry = reg.get(resolved)
+                        if entry:
+                            asyncio.create_task(_log_route_analytics(
+                                user.id, requested, task_type, resolved, entry.provider_id, tier, True,
+                            ))
+                        return resolved
+
+            if task_type in preferred_models:
+                task_models = preferred_models[task_type]
+                if isinstance(task_models, list):
+                    for idx, model in enumerate(task_models):
+                        resolved = _resolve_with_provider_priority(model, provider_priority, enabled)
+                        if resolved and resolved not in avoid:
+                            entry = reg.get(resolved)
+                            if entry:
+                                asyncio.create_task(_log_route_analytics(
+                                    user.id, requested, task_type, resolved, entry.provider_id, tier, True, idx,
+                                ))
+                            return resolved
+
+    # Priority 2: Admin AutoRouterConfig from database
     async with SessionLocal() as db:
         config_id = f"{tier}:{task_type}"
         config = (
@@ -713,22 +1057,30 @@ async def _auto_route_model(requested: str, task_type: str, enabled: set[str]) -
             try:
                 candidates = json.loads(config.model_ids)
                 if isinstance(candidates, list) and candidates:
-                    for candidate in candidates:
+                    for idx, candidate in enumerate(candidates):
                         entry = reg.get(candidate)
                         if entry and entry.model_id in enabled:
+                            if user:
+                                asyncio.create_task(_log_route_analytics(
+                                    user.id, requested, task_type, entry.model_id, entry.provider_id, tier, False, idx,
+                                ))
                             return entry.model_id
             except (json.JSONDecodeError, TypeError):
                 pass
 
-    # Fall back to hardcoded routes
-    route_set = routes_map.get(requested)
+    # Priority 3: Hardcoded fallback routes
+    route_set = routes_map.get(tier) or routes_map.get(requested)
     if not route_set:
         return None
 
     candidates = route_set.get(task_type, route_set.get("nuanced_coding", []))
-    for candidate in candidates:
+    for idx, candidate in enumerate(candidates):
         entry = reg.get(candidate)
         if entry and entry.model_id in enabled:
+            if user:
+                asyncio.create_task(_log_route_analytics(
+                    user.id, requested, task_type, entry.model_id, entry.provider_id, tier, False, idx,
+                ))
             return entry.model_id
     return None
 
@@ -752,7 +1104,7 @@ async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
     if requested and entry and entry.base_url == "INTERNAL":
         decision = route(messages)
         task_type = getattr(decision.task_type, "value", str(decision.task_type))
-        auto_model_id = await _auto_route_model(requested, task_type, enabled)
+        auto_model_id = await _auto_route_model(requested, task_type, enabled, user=user)
         if auto_model_id:
             entry = reg.get(auto_model_id)
             log.info("Auto-route '%s' [%s] → %s", requested, task_type, auto_model_id)
