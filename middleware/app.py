@@ -48,6 +48,7 @@ from .providers import anthropic as anthropic_provider
 from .providers import bedrock as bedrock_provider
 from .providers import gemini as gemini_provider
 from .providers import openai_compat
+from .providers import pi_cli as pi_cli_provider
 from .tokens import delete_user_token, get_user_token, list_user_tokens, set_user_token
 
 ENV_PATH = Path(__file__).parent.parent / ".env"
@@ -1139,7 +1140,8 @@ async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
         log.info("Model '%s' → %s (%s)", requested, entry.model_id, entry.provider)
 
     # 3. Apply user's personal API key if one is stored; non-admins must have one
-    if user and entry.provider_id:
+    # pi_cli providers use server-side auth — no per-user key needed
+    if user and entry.provider_id and entry.provider != "pi_cli":
         user_key = await get_user_token(user.id, entry.provider_id)
         if user_key:
             from dataclasses import replace as dc_replace
@@ -1151,7 +1153,7 @@ async def _handle(body: dict, is_responses_api: bool, user=None) -> Response:
                 detail=f"No personal API key for provider '{entry.provider_id}'. Add one in Dashboard → API Keys.",
             )
 
-    if entry.provider != "bedrock" and (not entry.api_key or "REPLACE_ME" in entry.api_key):
+    if entry.provider not in ("bedrock", "pi_cli") and (not entry.api_key or "REPLACE_ME" in entry.api_key):
         raise HTTPException(status_code=401,
                             detail=f"No API key for '{entry.provider}'. Run `python pi_auth.py`.")
 
@@ -1175,6 +1177,8 @@ async def _complete(entry: reg.ModelEntry, body: dict) -> dict:
         return await gemini_provider.chat(entry.model_id, body, entry.api_key)
     if entry.provider == "bedrock":
         return await bedrock_provider.chat(entry.model_id, body, entry.options)
+    if entry.provider == "pi_cli":
+        return await pi_cli_provider.chat(entry.model_id, body)
     return await openai_compat.chat(
         entry.model_id, body, entry.api_key, entry.base_url, entry.extra_headers
     )
@@ -1189,6 +1193,9 @@ async def _stream(entry: reg.ModelEntry, body: dict) -> AsyncIterator[str]:
             yield chunk
     elif entry.provider == "bedrock":
         async for chunk in bedrock_provider.stream(entry.model_id, body, entry.options):
+            yield chunk
+    elif entry.provider == "pi_cli":
+        async for chunk in pi_cli_provider.stream(entry.model_id, body):
             yield chunk
     else:
         async for chunk in openai_compat.stream(

@@ -1219,6 +1219,66 @@ def _bedrock_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | Non
     return provider, tuple(models)
 
 
+def _gemini_cli_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    """Google Gemini models accessed via `pi --model <id> <prompt>`."""
+    provider = ProviderConfig(
+        id="google-gemini-cli",
+        api="pi_cli",
+        label="google-gemini-cli",
+        env_keys=(),
+    )
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.0-flash",        "Gemini 2.0 Flash (CLI)",          ("gemini-flash-2",),          False, True,  1_048_576,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-flash",        "Gemini 2.5 Flash (CLI)",          ("gemini-flash",),            False, True,  1_048_576,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-2.5-pro",          "Gemini 2.5 Pro (CLI)",            ("gemini-pro",),              True,  True,  1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-3-flash-preview",  "Gemini 3 Flash Preview (CLI)",    ("gemini-3-flash",),          False, True,  1_048_576,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-3-pro-preview",    "Gemini 3 Pro Preview (CLI)",      ("gemini-3-pro",),            True,  True,  1_048_576, 65_536),
+        CatalogModel(provider.id, provider.api, provider.label, "gemini-3.1-pro-preview",  "Gemini 3.1 Pro Preview (CLI)",    ("gemini-3.1-pro",),          True,  True,  1_048_576, 65_536),
+    )
+    return provider, models
+
+
+def _openai_codex_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    """OpenAI Codex models accessed via `pi --model <id> <prompt>`."""
+    provider = ProviderConfig(
+        id="openai-codex",
+        api="pi_cli",
+        label="openai-codex",
+        env_keys=(),
+    )
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.1",              "GPT-5.1 (Codex)",           ("codex-5.1",),          True, True,  1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.1-codex-max",    "GPT-5.1 Codex Max",         ("codex-max",),          True, True,  1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.1-codex-mini",   "GPT-5.1 Codex Mini",        ("codex-mini",),         True, True,  1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.2",              "GPT-5.2 (Codex)",           ("codex-5.2",),          True, True,  1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.2-codex",        "GPT-5.2 Codex",             ("codex-5.2-c",),        True, True,  1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.3-codex",        "GPT-5.3 Codex (Codex CLI)", ("codex-5.3",),          True, True,  1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.3-codex-spark",  "GPT-5.3 Codex Spark",       ("codex-spark",),        True, True,  1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.4",              "GPT-5.4 (Codex)",           ("codex-5.4",),          True, True,  1_000_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-5.4-mini",         "GPT-5.4 Mini (Codex)",      ("codex-5.4-mini",),     True, True,  1_000_000, 100_000),
+    )
+    return provider, models
+
+
+def _copilot_pi_provider() -> tuple[ProviderConfig, tuple[CatalogModel, ...]] | None:
+    """GitHub Copilot models accessed via `pi --model <id> <prompt>`."""
+    provider = ProviderConfig(
+        id="github-copilot-pi",
+        api="pi_cli",
+        label="github-copilot-pi",
+        env_keys=(),
+    )
+    models = (
+        CatalogModel(provider.id, provider.api, provider.label, "claude-sonnet-4-6",        "Claude Sonnet 4.6 (Copilot PI)", ("copilot-pi-sonnet",),   False, True, 200_000, 16_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-opus-4-7",          "Claude Opus 4.7 (Copilot PI)",   ("copilot-pi-opus",),     True,  True, 200_000, 32_000),
+        CatalogModel(provider.id, provider.api, provider.label, "claude-haiku-4-5-20251001","Claude Haiku 4.5 (Copilot PI)",  ("copilot-pi-haiku",),    False, True, 200_000,  8_192),
+        CatalogModel(provider.id, provider.api, provider.label, "gpt-4o",                   "GPT-4o (Copilot PI)",            ("copilot-pi-gpt4o",),    False, True, 128_000, 16_384),
+        CatalogModel(provider.id, provider.api, provider.label, "o3",                       "o3 (Copilot PI)",                ("copilot-pi-o3",),       True,  False, 200_000, 100_000),
+        CatalogModel(provider.id, provider.api, provider.label, "o4-mini",                  "o4-mini (Copilot PI)",           ("copilot-pi-o4-mini",),  True,  False, 200_000, 100_000),
+    )
+    return provider, models
+
+
 def _provider_specs() -> list[tuple[ProviderConfig, tuple[CatalogModel, ...]]]:
     providers = []
     for builder in (
@@ -1241,6 +1301,9 @@ def _provider_specs() -> list[tuple[ProviderConfig, tuple[CatalogModel, ...]]]:
         _kilo_provider,
         _opencode_provider,
         _bedrock_provider,
+        _gemini_cli_provider,
+        _openai_codex_provider,
+        _copilot_pi_provider,
     ):
         spec = builder()
         if spec:
